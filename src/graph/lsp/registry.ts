@@ -4,6 +4,8 @@
  * simply means that language gets no LSP enrichment (the AST graph stands alone).
  */
 import { execFileSync, execSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 export interface LspServer {
   /** graft language names (as produced by languageLabelOf/genericLangOf) this serves. */
@@ -54,11 +56,60 @@ function resolveCommand(cmd: string): string | null {
   return abs;
 }
 
+export function parseTypeScriptMajor(versionOutput: string): number | null {
+  const match = versionOutput.match(/(?:Version\s+)?(\d+)\./i);
+  return match ? Number(match[1]) : null;
+}
+
+function nativeTypeScriptServer(languagesPresent: Set<string>): LspServer | null {
+  const languages = ["typescript", "javascript", "tsx"].filter((l) => languagesPresent.has(l));
+  if (!languages.length) return null;
+
+  const tsc = resolveCommand("tsc");
+  if (!tsc) return null;
+
+  let command = tsc;
+  let args = ["--lsp", "--stdio"];
+  let versionArgs = ["--version"];
+
+  // npm's Windows tsc entrypoint is a .cmd shim. Bypass cmd.exe entirely so
+  // stdio remains a direct LSP transport: node <typescript>/bin/tsc --lsp --stdio.
+  if (process.platform === "win32" && /\.(cmd|bat)$/i.test(tsc)) {
+    const script = join(dirname(tsc), "node_modules", "typescript", "bin", "tsc");
+    if (!existsSync(script)) return null;
+    command = process.execPath;
+    args = [script, "--lsp", "--stdio"];
+    versionArgs = [script, "--version"];
+  }
+
+  try {
+    const version = execFileSync(command, versionArgs, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
+    if ((parseTypeScriptMajor(version) ?? 0) < 7) return null;
+  } catch {
+    return null;
+  }
+
+  return { languages, command, args, languageId: "typescript" };
+}
+
 /** Pick servers for all covered languages, with absolute commands. Each language
  * is assigned once, and a server shared by several languages is started once. */
 export function pickServers(languagesPresent: Set<string>): LspServer[] {
   const remaining = new Set(languagesPresent);
   const servers: LspServer[] = [];
+
+  // TypeScript 7+ ships its own native LSP. Prefer it when available; older
+  // TypeScript versions fall through to typescript-language-server below.
+  const nativeTs = nativeTypeScriptServer(remaining);
+  if (nativeTs) {
+    servers.push(nativeTs);
+    for (const language of nativeTs.languages) remaining.delete(language);
+  }
+
   for (const s of LSP_SERVERS) {
     const languages = s.languages.filter((l) => remaining.has(l));
     if (!languages.length) continue;
