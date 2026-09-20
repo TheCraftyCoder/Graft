@@ -45,7 +45,7 @@ import { planRetract, runRetract, changed, type Retraction } from "./hosts/retra
 import { formatNonInteractiveHelp, formatPlan, runPicker } from "./cli-picker.js";
 import { homedir } from "node:os";
 import { formatUpgradeReport, formatVersionReport, getNpmViewVersion, readCurrentVersion, runUpgrade } from "./cli-meta.js";
-import { patchBuildConfig, type BuildConfig } from "./util/state.js";
+import { patchBuildConfig, readLspEnabled, type BuildConfig } from "./util/state.js";
 import { normalizePathPrefix } from "./util/paths.js";
 import { latestSession, formatSessionStats, sessionInputRate } from "./claude/session-metrics.js";
 import { setInputRate } from "./context/savings.js";
@@ -398,6 +398,7 @@ program
     // every later no-flag build / hooks refresh) see it identically — the
     // walkDir call sites read it from state, not from a threaded option.
     const buildConfigPatch: BuildConfig = {};
+    if (opts.lsp === true) buildConfigPatch.lsp = true;
     if (opts.includeDir && opts.includeDir.length > 0) {
       // --include-dir takes bare SKIP_DIRS-style directory NAMES (shouldSkipDir
       // compares a single path segment), never paths, and dot-dirs are never
@@ -471,6 +472,7 @@ program
     // Workspace parent: build each child into its OWN graft/ + a workspace index.
     const buildRoot = resolve(dir);
     const buildGlobalDir = program.opts<GlobalOpts>().dir;
+    const effectiveLsp = opts.lsp === true || readLspEnabled(buildRoot);
     if (isWorkspaceBuildRoot(buildRoot, buildGlobalDir)) {
       await runWorkspaceBuild(buildRoot, {
         deep: !!deep,
@@ -481,6 +483,7 @@ program
         includeDirs: opts.includeDir,
         followSubmodules: followSubmodulesWasExplicit ? opts.followSubmodules : undefined,
         followNestedRepos: followNestedReposWasExplicit ? opts.followNestedRepos : undefined,
+        lsp: opts.lsp === true ? true : undefined,
       });
       return;
     }
@@ -515,7 +518,7 @@ program
       llm: deep,
       concurrency,
       reuse: opts.reuse,
-      lsp: opts.lsp,
+      lsp: effectiveLsp,
       onlyDirs,
       onProgress: ({ phase, index, total, file }) =>
         process.stderr.write(
