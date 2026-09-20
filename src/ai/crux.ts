@@ -227,9 +227,20 @@ export class ChatCruxSummarizer implements CruxSummarizer {
       if (miss && firstMiss === null) firstMiss = miss;
 
       const expectedIds = new Set(nodes.map((node) => node.id));
+      const descriptorToId = new Map(
+        nodes.map((node) => [
+          `${node.id} | ${node.kind} | lines L${node.startLine}-L${node.endLine}`,
+          node.id,
+        ]),
+      );
+
       for (const symbol of parsed) {
-        if (expectedIds.has(symbol.id) && symbol.summary.trim()) {
-          allParsedById.set(symbol.id, symbol);
+        const canonicalId = expectedIds.has(symbol.id)
+          ? symbol.id
+          : descriptorToId.get(symbol.id);
+
+        if (canonicalId && symbol.summary.trim()) {
+          allParsedById.set(canonicalId, { ...symbol, id: canonicalId });
         }
       }
     };
@@ -250,6 +261,7 @@ export class ChatCruxSummarizer implements CruxSummarizer {
     }
 
     let remaining = input.nodes.filter((node) => !allParsedById.has(node.id));
+
     for (const node of remaining) {
       if (singletonDelayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, singletonDelayMs));
@@ -258,6 +270,7 @@ export class ChatCruxSummarizer implements CruxSummarizer {
     }
 
     remaining = input.nodes.filter((node) => !allParsedById.has(node.id));
+
     if (remaining.length > 0) {
       this.lastMiss =
         firstMiss ??

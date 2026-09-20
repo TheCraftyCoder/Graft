@@ -50,6 +50,20 @@ test("openai: plain text — system/user map to strings, usage is uncached-only"
   assert.deepEqual(res.usage, { input: 70, output: 20, cacheRead: 30, cacheCreate: 0 });
 });
 
+test("openai: GRAFT_REASONING_EFFORT is forwarded when set", async () => {
+  const previous = process.env.GRAFT_REASONING_EFFORT;
+  process.env.GRAFT_REASONING_EFFORT = "low";
+  try {
+    const { client, box } = fakeOpenAI(openAiResp());
+    const m = new OpenAIChatModel({ apiKey: "x", model: "gpt-x", client });
+    await m.create({ messages: [{ role: "user", content: "hi" }] });
+    assert.equal(box.params.reasoning_effort, "low");
+  } finally {
+    if (previous === undefined) delete process.env.GRAFT_REASONING_EFFORT;
+    else process.env.GRAFT_REASONING_EFFORT = previous;
+  }
+});
+
 test("openai: cacheBreakpoint turns content into a cache_control part", async () => {
   const { client, box } = fakeOpenAI(openAiResp());
   const m = new OpenAIChatModel({ apiKey: "x", model: "gpt-x", client });

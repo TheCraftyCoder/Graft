@@ -152,6 +152,10 @@ export class OpenAIChatModel implements ChatModel {
     const messages = req.messages.map(toChatMessage);
     const tools = req.tools ? req.tools.map(toChatTool) : undefined;
     const params: ChatParams = { model: this.model, messages };
+    const reasoningEffort = process.env.GRAFT_REASONING_EFFORT?.trim();
+    if (reasoningEffort) {
+      params.reasoning_effort = reasoningEffort as ChatParams["reasoning_effort"];
+    }
     if (req.temperature !== undefined) params.temperature = req.temperature;
     if (req.maxTokens !== undefined) params.max_tokens = req.maxTokens;
 
