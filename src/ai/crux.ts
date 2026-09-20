@@ -47,7 +47,7 @@ export interface CruxSummarizer {
 }
 
 /** Why a crux call produced no usable summaries (#235). */
-export type CruxMissKind = "empty-toolCalls" | "unparseable" | "truncated" | "empty-parsed";
+export type CruxMissKind = "empty-toolCalls" | "unparseable" | "truncated" | "empty-parsed" | "incomplete-parsed";
 
 export interface CruxMiss {
   kind: CruxMissKind;
@@ -180,24 +180,95 @@ export class ChatCruxSummarizer implements CruxSummarizer {
   async describeFile(input: FileCruxInput): Promise<NodeCrux[]> {
     this.lastMiss = null;
     if (input.nodes.length === 0) return [];
-    const res = await this.model.create({
-      temperature: 0,
-      maxTokens: 8192,
-      tools: [
-        {
-          name: RECORD_TOOL,
-          description: "Record each target definition's purpose and crux line range.",
-          parameters: SYMBOLS_SCHEMA as unknown as Record<string, unknown>,
-        },
-      ],
-      responseFormat: { kind: "tool", name: RECORD_TOOL },
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userContent(input) },
-      ],
-    });
-    const parsed = parseResults(argsFromResponse(res));
-    this.lastMiss = classifyCruxMiss(res, parsed);
-    return parsed;
+
+    const chunkSizeRaw = Number(process.env.GRAFT_CRUX_CHUNK_SIZE ?? "30");
+    const chunkSize =
+      Number.isFinite(chunkSizeRaw) && chunkSizeRaw > 0 ? Math.floor(chunkSizeRaw) : 30;
+
+    const retriesRaw = Number(process.env.GRAFT_CRUX_CHUNK_RETRIES ?? "2");
+    const retryCount =
+      Number.isFinite(retriesRaw) && retriesRaw >= 0 ? Math.floor(retriesRaw) : 2;
+
+    const retryDelayRaw = Number(process.env.GRAFT_CRUX_RETRY_DELAY_MS ?? "750");
+    const retryDelayMs =
+      Number.isFinite(retryDelayRaw) && retryDelayRaw >= 0 ? Math.floor(retryDelayRaw) : 750;
+
+    const singletonDelayRaw = Number(process.env.GRAFT_CRUX_SINGLETON_DELAY_MS ?? "1500");
+    const singletonDelayMs =
+      Number.isFinite(singletonDelayRaw) && singletonDelayRaw >= 0
+        ? Math.floor(singletonDelayRaw)
+        : 1500;
+
+    const allParsedById = new Map<string, NodeCrux>();
+    let firstMiss: CruxMiss | null = null;
+    let lastFinishReason: string | null = null;
+
+    const requestNodes = async (nodes: NodeRef[]) => {
+      const res = await this.model.create({
+        temperature: 0,
+        maxTokens: 8192,
+        tools: [
+          {
+            name: RECORD_TOOL,
+            description: "Record each target definition's purpose and crux line range.",
+            parameters: SYMBOLS_SCHEMA as unknown as Record<string, unknown>,
+          },
+        ],
+        responseFormat: { kind: "tool", name: RECORD_TOOL },
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userContent({ ...input, nodes }) },
+        ],
+      });
+
+      lastFinishReason = res.stopReason;
+      const parsed = parseResults(argsFromResponse(res));
+      const miss = classifyCruxMiss(res, parsed);
+      if (miss && firstMiss === null) firstMiss = miss;
+
+      const expectedIds = new Set(nodes.map((node) => node.id));
+      for (const symbol of parsed) {
+        if (expectedIds.has(symbol.id) && symbol.summary.trim()) {
+          allParsedById.set(symbol.id, symbol);
+        }
+      }
+    };
+
+    for (let offset = 0; offset < input.nodes.length; offset += chunkSize) {
+      const nodes = input.nodes.slice(offset, offset + chunkSize);
+
+      for (let attempt = 0; attempt <= retryCount; attempt++) {
+        const remaining = nodes.filter((node) => !allParsedById.has(node.id));
+        if (remaining.length === 0) break;
+
+        if (attempt > 0 && retryDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+        }
+
+        await requestNodes(remaining);
+      }
+    }
+
+    let remaining = input.nodes.filter((node) => !allParsedById.has(node.id));
+    for (const node of remaining) {
+      if (singletonDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, singletonDelayMs));
+      }
+      await requestNodes([node]);
+    }
+
+    remaining = input.nodes.filter((node) => !allParsedById.has(node.id));
+    if (remaining.length > 0) {
+      this.lastMiss =
+        firstMiss ??
+        ({
+          kind: "incomplete-parsed",
+          finishReason: lastFinishReason,
+        } satisfies CruxMiss);
+    }
+
+    return input.nodes
+      .map((node) => allParsedById.get(node.id))
+      .filter((node): node is NodeCrux => Boolean(node));
   }
 }
