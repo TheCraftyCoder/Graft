@@ -97,6 +97,142 @@ test("ChatCruxSummarizer normalizes decorated target descriptors back to canonic
   ]);
 });
 
+test("ChatCruxSummarizer chunks large target sets", async () => {
+  class ChunkModel implements ChatModel {
+    readonly label = "fake:model";
+    calls: ChatRequest[] = [];
+
+    async create(req: ChatRequest): Promise<ChatResponse> {
+      this.calls.push(req);
+      const user = req.messages.find((m) => m.role === "user")?.content ?? "";
+      const ids = [...user.matchAll(/^- id=(.+?) \|/gm)].map((m) => m[1]);
+
+      return {
+        text: "",
+        toolCalls: [
+          {
+            id: "1",
+            name: "record_symbols",
+            args: {
+              symbols: ids.map((id) => ({
+                id,
+                summary: "ok",
+                crux_start: 0,
+                crux_end: 0,
+              })),
+            },
+          },
+        ],
+        usage: { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
+        stopReason: "tool_calls",
+        assistant: { role: "assistant", content: "" },
+      };
+    }
+  }
+
+  const previous = process.env.GRAFT_CRUX_CHUNK_SIZE;
+  process.env.GRAFT_CRUX_CHUNK_SIZE = "2";
+
+  try {
+    const m = new ChunkModel();
+    const nodes = [1, 2, 3, 4, 5].map((i) => ({
+      id: `sym${i}`,
+      kind: "function" as const,
+      signature: null,
+      startLine: i,
+      endLine: i,
+    }));
+
+    const out = await new ChatCruxSummarizer(m).describeFile({
+      path: "a.ts",
+      source: "1\n2\n3\n4\n5",
+      nodes,
+    });
+
+    assert.equal(m.calls.length, 3);
+    assert.equal(out.length, 5);
+  } finally {
+    if (previous === undefined) delete process.env.GRAFT_CRUX_CHUNK_SIZE;
+    else process.env.GRAFT_CRUX_CHUNK_SIZE = previous;
+  }
+});
+
+test("ChatCruxSummarizer retries only missing targets before singleton fallback", async () => {
+  class PartialModel implements ChatModel {
+    readonly label = "fake:model";
+    calls: string[][] = [];
+
+    async create(req: ChatRequest): Promise<ChatResponse> {
+      const user = req.messages.find((m) => m.role === "user")?.content ?? "";
+      const ids = [...user.matchAll(/^- id=(.+?) \|/gm)].map((m) => m[1]);
+      this.calls.push(ids);
+
+      const returned = this.calls.length === 1 ? ids.slice(0, 1) : ids;
+
+      return {
+        text: "",
+        toolCalls: [
+          {
+            id: "1",
+            name: "record_symbols",
+            args: {
+              symbols: returned.map((id) => ({
+                id,
+                summary: "ok",
+                crux_start: 0,
+                crux_end: 0,
+              })),
+            },
+          },
+        ],
+        usage: { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
+        stopReason: "tool_calls",
+        assistant: { role: "assistant", content: "" },
+      };
+    }
+  }
+
+  const previous = {
+    size: process.env.GRAFT_CRUX_CHUNK_SIZE,
+    retries: process.env.GRAFT_CRUX_CHUNK_RETRIES,
+    retryDelay: process.env.GRAFT_CRUX_RETRY_DELAY_MS,
+    singletonDelay: process.env.GRAFT_CRUX_SINGLETON_DELAY_MS,
+  };
+
+  process.env.GRAFT_CRUX_CHUNK_SIZE = "30";
+  process.env.GRAFT_CRUX_CHUNK_RETRIES = "1";
+  process.env.GRAFT_CRUX_RETRY_DELAY_MS = "0";
+  process.env.GRAFT_CRUX_SINGLETON_DELAY_MS = "0";
+
+  try {
+    const m = new PartialModel();
+
+    const out = await new ChatCruxSummarizer(m).describeFile({
+      path: "a.ts",
+      source: "1\n2",
+      nodes: [
+        { id: "sym1", kind: "function", signature: null, startLine: 1, endLine: 1 },
+        { id: "sym2", kind: "function", signature: null, startLine: 2, endLine: 2 },
+      ],
+    });
+
+    assert.deepEqual(m.calls, [["sym1", "sym2"], ["sym2"]]);
+    assert.deepEqual(out.map((x) => x.id), ["sym1", "sym2"]);
+  } finally {
+    const entries = [
+      ["GRAFT_CRUX_CHUNK_SIZE", previous.size],
+      ["GRAFT_CRUX_CHUNK_RETRIES", previous.retries],
+      ["GRAFT_CRUX_RETRY_DELAY_MS", previous.retryDelay],
+      ["GRAFT_CRUX_SINGLETON_DELAY_MS", previous.singletonDelay],
+    ] as const;
+
+    for (const [key, value] of entries) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
 test("structured ops degrade gracefully when the model returns no tool call", async () => {
   const empty = new FakeChatModel({ toolCalls: [] });
   const { err } = await withCapturedError(async () => {
