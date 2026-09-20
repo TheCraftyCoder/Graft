@@ -9,6 +9,10 @@ import assert from "node:assert/strict";
 import { pickServers, LSP_SERVERS, parseTypeScriptMajor } from "../src/graph/lsp/registry.js";
 import { enrichWithLsp, readinessSample } from "../src/graph/lsp/enrich.js";
 import type { GraphV1 } from "../src/graph/types.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { patchBuildConfig, readLspEnabled } from "../src/util/state.js";
 
 test("pickServers: no languages present → no servers", () => {
   assert.deepEqual(pickServers(new Set()), []);
@@ -63,4 +67,12 @@ test("readinessSample spreads probes across files and deduplicates paths", () =>
     { path: "c.ts", i: 4 },
   ];
   assert.deepEqual(readinessSample(repeated).map((item) => item.path), ["a.ts", "b.ts"]);
+});
+
+
+test("LSP build preference is persisted per repository", () => {
+  const dir = mkdtempSync(join(tmpdir(), "graft-lsp-pref-"));
+  assert.equal(readLspEnabled(dir), false);
+  patchBuildConfig(dir, { lsp: true });
+  assert.equal(readLspEnabled(dir), true);
 });
