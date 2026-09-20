@@ -197,7 +197,21 @@ export class ChatCruxSummarizer implements CruxSummarizer {
       ],
     });
     const parsed = parseResults(argsFromResponse(res));
-    this.lastMiss = classifyCruxMiss(res, parsed);
-    return parsed;
+    const expectedIds = new Set(input.nodes.map((node) => node.id));
+    const descriptorToId = new Map(
+      input.nodes.map((node) => [
+        `${node.id} | ${node.kind} | lines L${node.startLine}-L${node.endLine}`,
+        node.id,
+      ]),
+    );
+    const normalized = parsed
+      .map((symbol) => {
+        const canonicalId = expectedIds.has(symbol.id) ? symbol.id : descriptorToId.get(symbol.id);
+        return canonicalId ? { ...symbol, id: canonicalId } : null;
+      })
+      .filter((symbol): symbol is NodeCrux => symbol !== null);
+
+    this.lastMiss = classifyCruxMiss(res, normalized);
+    return normalized;
   }
 }
