@@ -68,6 +68,35 @@ test("ChatCruxSummarizer forces record_symbols and normalizes numbers", async ()
   assert.deepEqual(out, [{ id: "sym1", summary: "does x", crux_start: 3, crux_end: 5 }]);
 });
 
+test("ChatCruxSummarizer normalizes decorated target descriptors back to canonical ids", async () => {
+  const m = new FakeChatModel({
+    toolCalls: [
+      {
+        id: "1",
+        name: "record_symbols",
+        args: {
+          symbols: [
+            {
+              id: "a.ts | file | lines L1-L5",
+              summary: "describes the file",
+              crux_start: 0,
+              crux_end: 0,
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const out = await new ChatCruxSummarizer(m).describeFile({
+    path: "a.ts",
+    source: "1\n2\n3\n4\n5",
+    nodes: [{ id: "a.ts", kind: "file", signature: null, startLine: 1, endLine: 5 }],
+  });
+  assert.deepEqual(out, [
+    { id: "a.ts", summary: "describes the file", crux_start: 0, crux_end: 0 },
+  ]);
+});
+
 test("structured ops degrade gracefully when the model returns no tool call", async () => {
   const empty = new FakeChatModel({ toolCalls: [] });
   const { err } = await withCapturedError(async () => {
