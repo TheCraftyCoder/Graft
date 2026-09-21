@@ -103,7 +103,8 @@ export const HOSTS: HostTarget[] = [
     content: instructionHint,
     // Antigravity-specific markers, NOT the bare `~/.gemini` (which is also Gemini CLI's):
     // its global config dir (`~/.gemini/config/`, where mcp_config.json + hooks.json live)
-    // or a workspace `.agents/` dir. Keeps a plain Gemini-CLI user from auto-selecting it.
+    // or its dedicated CLI dir. `.agents/` is a cross-agent skill standard and
+    // must not auto-select Antigravity.
     detect: (p) =>
       p.dirExists(join(p.home, '.gemini', 'config')) ||
       p.dirExists(join(p.home, '.gemini', 'antigravity-cli')),
