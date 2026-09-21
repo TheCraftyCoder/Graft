@@ -17,6 +17,7 @@ import { cursorHookTargets } from './cursor-hooks.js';
 import { antigravitySkillTargets } from './antigravity.js';
 import { claudeTargets } from '../claude/init.js';
 import { claudeGlobalTargets } from './claude-global.js';
+import { planRetract, changed, type Retraction } from './retract.js';
 
 /** Where a write lands. 'global' = outside the repo, affects every project. */
 export type WriteScope = 'repo' | 'global';
@@ -95,4 +96,54 @@ export function planInit(repo: string, opts: { home?: string; ids?: string[] } =
 /** Flatten a plan down to the writes for the selected host ids. */
 export function selectedWrites(plan: HostPlan[], ids: string[]): PlannedWrite[] {
   return plan.filter((p) => ids.includes(p.id)).flatMap((p) => p.writes);
+}
+
+/** The flags that decide which planned writes a real graft init performs. */
+export interface OperationOpts {
+  home?: string;
+  mcp?: boolean;
+  hooks?: boolean;
+  global?: boolean;
+  statusline?: boolean;
+  preserve?: boolean;
+}
+
+/**
+ * Whether the real run performs this write under the flags. The one filter
+ * runHostsInit and planOperations share, so they cannot drift.
+ * Claude Code's own layer (runInit) honours only global: it writes its
+ * .mcp.json and settings hook blocks regardless of --no-mcp / --no-hooks, and it
+ * writes the statusline shim and settings.json even under --no-statusline (the
+ * flag only changes what the settings block contains).
+ */
+export function writeAllowed(
+  w: Pick<PlannedWrite, 'hostId' | 'kind' | 'scope'>,
+  opts: Pick<OperationOpts, 'mcp' | 'hooks' | 'global'>,
+): boolean {
+  if (opts.global === false && w.scope === 'global') return false;
+  if (w.hostId === 'claude') return true;
+  if (opts.mcp === false && w.kind === 'mcp') return false;
+  if (opts.hooks === false && w.kind === 'hook') return false;
+  return true;
+}
+
+export interface PlannedOperations {
+  writes: PlannedWrite[];
+  retractions: Retraction[];
+}
+
+/**
+ * Everything a real graft init for ids would change under these flags:
+ * the writes, and the unselected-host retractions (none under --preserve).
+ * Pure — touches nothing.
+ */
+export function planOperations(repo: string, ids: string[], opts: OperationOpts = {}): PlannedOperations {
+  const home = opts.home ?? homedir();
+  const writes = selectedWrites(planInit(repo, { home }), ids).filter((w) => writeAllowed(w, opts));
+  const retractions = opts.preserve
+    ? []
+    : changed(planRetract(repo, { home, exclude: ids, global: opts.global, cache: false })).filter(
+        (r) => r.action !== 'skipped-unparseable',
+      );
+  return { writes, retractions };
 }

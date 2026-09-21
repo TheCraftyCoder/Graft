@@ -1,3 +1,7 @@
+import { realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { win32 as pathWin32, posix as pathPosix } from 'node:path';
+
 // Generates the tiny `.cjs` shims committed into a repo's `.claude/helpers/`. Their only
 // job is to locate the installed `@nanonets/graft` package's `dist/claude/<entry>.js` and
 // call into it — so the real logic lives in the package and upgrades with it.
@@ -18,14 +22,81 @@
 // the old directory on disk and still winning, and `npm i -g @nanonets/graft@latest`
 // upgrades a directory the shim never looks at. The upgrade appeared to work and changed
 // nothing — the shim kept loading the version from whenever `graft init` was last run.
-function shim(entryFile: string, call: string, bakedDir: string): string {
+export interface BakedOpts {
+  tmpdir?: string;
+  realpath?: (p: string) => string;
+  platform?: NodeJS.Platform;
+}
+
+function normPath(p: string, platform: NodeJS.Platform): string {
+  let n = (platform === 'win32' ? pathWin32 : pathPosix).resolve(p);
+  if (platform === 'win32') n = n.toLowerCase();
+  return n.endsWith(sepFor(platform)) ? n : n + sepFor(platform);
+}
+function sepFor(platform: NodeJS.Platform): string { return platform === 'win32' ? '\\' : '/'; }
+
+/**
+ * The dir to bake into a shim, or null when it must be omitted: the REAL location
+ * (symlinks resolved) is under the OS temp dir, so it would be a dead path later.
+ * Returns the realpath'd dir otherwise.
+ */
+export function bakedDirFor(dist: string, opts: BakedOpts = {}): string | null {
+  const platform = opts.platform ?? process.platform;
+  const realpath = opts.realpath ?? ((p: string) => realpathSync(p));
+  let real = dist;
+  try { real = realpath(dist); } catch { /* missing → keep as given */ }
+  let tmp = opts.tmpdir ?? tmpdir();
+  let tmpReal = tmp;
+  try { tmpReal = realpath(tmp); } catch { /* keep */ }
+  const r = normPath(real, platform);
+  const d = normPath(dist, platform);
+  for (const t of [tmp, tmpReal]) {
+    const nt = normPath(t, platform);
+    if (r.startsWith(nt) || d.startsWith(nt)) return null;
+  }
+  return real;
+}
+
+function shim(entryFile: string, call: string, bakedDir: string, opts?: BakedOpts): string {
+  const baked = bakedDirFor(bakedDir, opts);
   return `#!/usr/bin/env node
+// Optional preload (env GRAFT_HIDE_PRELOAD=<file>); the shim works without it.
+if (process.env.GRAFT_HIDE_PRELOAD) { try { require(process.env.GRAFT_HIDE_PRELOAD); } catch {} }
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { execFileSync } = require('child_process');
+
+// Windows: Claude Code runs this helper without a console, so every console child it or the
+// graft module spawns would otherwise allocate a visible window. Default every child_process
+// call to windowsHide and resync the ESM bindings dist/claude/*.js import.
+if (process.platform === 'win32') {
+  const cp = require('child_process');
+  // exec/execSync take (cmd[, options][, cb]); the spawn/execFile family take
+  // (file[, args][, options][, cb]). Placeholders (undefined/null) are replaced; a callback
+  // in the options slot gets the options inserted before it.
+  const hide = (name, args) => {
+    const hasArgsSlot = name !== 'exec' && name !== 'execSync';
+    const optIdx = hasArgsSlot && Array.isArray(args[1]) ? 2 : 1;
+    const cur = args[optIdx];
+    if (cur && typeof cur === 'object' && !Array.isArray(cur)) {
+      if (cur.windowsHide === undefined) args[optIdx] = { ...cur, windowsHide: true };
+    } else if (typeof cur === 'function') {
+      args.splice(optIdx, 0, { windowsHide: true });
+    } else {
+      while (args.length < optIdx) args.push(undefined);
+      args[optIdx] = { windowsHide: true };
+    }
+    return args;
+  };
+  for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync']) {
+    const orig = cp[name];
+    cp[name] = function (...args) { return orig.apply(this, hide(name, args)); };
+  }
+  require('module').syncBuiltinESMExports();
+}
 const dir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-const BAKED = ${JSON.stringify(bakedDir)};
+const BAKED = ${JSON.stringify(baked)};
 
 // The dist/claude dir of @nanonets/graft resolved from a base whose node_modules is searched.
 function fromPkg(base) {
@@ -38,7 +109,7 @@ function fromPkg(base) {
 // The global node_modules dir per npm (handles Homebrew/Windows/volta). Queried on demand.
 function globalRoot() {
   try {
-    const root = execFileSync('npm', ['root', '-g'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], shell: process.platform === 'win32' }).trim();
+    const root = execFileSync('npm', ['root', '-g'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], shell: process.platform === 'win32', windowsHide: true }).trim();
     return root || null;
   } catch { return null; /* npm unavailable */ }
 }
@@ -89,5 +160,5 @@ import(pathToFileURL(entry(${JSON.stringify(entryFile)})).href).then((m) => ${ca
 `;
 }
 
-export function statuslineShim(bakedDir: string): string { return shim('statusline.js', 'm.main()', bakedDir); }
-export function hooksShim(bakedDir: string): string { return shim('hooks.js', 'm.main(process.argv[2])', bakedDir); }
+export function statuslineShim(bakedDir: string, opts?: BakedOpts): string { return shim('statusline.js', 'm.main()', bakedDir, opts); }
+export function hooksShim(bakedDir: string, opts?: BakedOpts): string { return shim('hooks.js', 'm.main(process.argv[2])', bakedDir, opts); }

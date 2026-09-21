@@ -61,7 +61,7 @@ test('foreign hook entries are preserved; stale graft entries replaced', () => {
   writeFileSync(join(home, '.codex', 'hooks.json'), JSON.stringify({
     hooks: { PostToolUse: [
       { matcher: 'Bash', hooks: [{ type: 'command', command: 'other-tool' }] },
-      { matcher: 'Write', hooks: [{ type: 'command', command: 'node /old/graft-hooks.cjs post-edit' }] },
+      { matcher: 'Write', hooks: [{ type: 'command', command: 'node /old/.codex/hooks/graft/graft-hooks.cjs post-edit' }] },
     ] },
   }));
   installCodexHooks(home);

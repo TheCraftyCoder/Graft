@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { buildGraph } from '../src/graph/build.js';
+import { mcpInstructions, toolSearchQuery } from '../src/mcp/instructions.js';
+import { TOOLS } from '../src/mcp/tools.js';
 
 async function rpc(messages: object[], dir: string, expected: number): Promise<any[]> {
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'mcp', dir], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -146,6 +148,39 @@ test('initialize carries instructions — the layer that survives tool deferral'
   // survives un-truncated, so hold the line here rather than discover it later.
   assert.ok(instructions.length < 1000, `instructions must stay under 1000 chars, got ${instructions.length}`);
   assert.match(serverInfo.version, /^\d+\.\d+\.\d+$/, 'real version, not the old hardcoded 0');
+  assert.equal(instructions, mcpInstructions(), 'the wire text is the generated text');
+});
+
+test('MCP steering is selective, not graft-first, and makes no savings claims', () => {
+  const instructions = mcpInstructions();
+  assert.match(instructions, /selectively/i);
+  assert.match(instructions, /known file, symbol, literal, RPC id, type, or store/);
+  assert.match(instructions, /source, rg, or LSP/);
+  assert.match(instructions, /navigation evidence, not authoritative truth/);
+  assert.match(instructions, /read source before editing/);
+  assert.match(instructions, /graph refreshes before each query/);
+  assert.doesNotMatch(instructions, /Prefer these tools over grep\/read/i);
+  assert.doesNotMatch(instructions, /replaces several file reads/i);
+  assert.doesNotMatch(instructions, /tokens? saved|cheaper|\$\d|~\d+ tokens|saves?\b/i);
+
+  // ToolSearch deferral guidance still batches the tools in one lookup.
+  const query = toolSearchQuery();
+  assert.match(instructions, /ONE lookup/);
+  assert.ok(instructions.includes(`ToolSearch "${query}"`));
+  for (const t of ['graft_find_code', 'graft_find_all', 'graft_trace_calls', 'graft_file_api', 'graft_repo_map']) {
+    assert.ok(query.includes(`mcp__graft__${t}`), `query loads ${t}`);
+  }
+
+  // Tool descriptions never claim source verification is unnecessary or advertise savings.
+  const byName = new Map(TOOLS.map((t) => [t.name, t.description]));
+  assert.equal(byName.size, 6);
+  for (const [name, d] of byName) {
+    assert.doesNotMatch(d, /no file reads needed|usually the full answer|cheaper than reading|no need to (read|verify)/i, name);
+    assert.doesNotMatch(d, /find ALL affected files/, name);
+  }
+  assert.match(byName.get('graft_find_code')!, /read the source before editing/);
+  assert.match(byName.get('graft_file_api')!, /compact API view/);
+  assert.match(byName.get('graft_file_api')!, /signature \+ line span/);
 });
 
 test('unknown method returns -32601', async () => {
