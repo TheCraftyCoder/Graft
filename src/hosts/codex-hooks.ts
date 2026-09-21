@@ -72,7 +72,7 @@ export function installCodexHooks(home: string): ConfigWrite[] {
   for (const event of GRAFT_EVENTS) {
     if (hooks[event] !== undefined && !Array.isArray(hooks[event])) return [shimWrite, skipped];
   }
-  const desired = new Map<GraftEvent, DesiredEntry>(desiredEntries().map((d) => [d.event, d]));
+  const desired = new Map<GraftEvent, DesiredEntry>(desiredEntries().map((d) => [d.event, d] as const));
   for (const event of GRAFT_EVENTS) {
     const prior: unknown[] = Array.isArray(hooks[event]) ? hooks[event] : [];
     const foreign = prior.filter((e) => !isGraftEntry(e));
