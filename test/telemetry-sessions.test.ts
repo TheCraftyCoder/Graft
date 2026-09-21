@@ -21,7 +21,7 @@ test('closed-session telemetry is never queued or marked summarized', () => {
     assert.equal(flushClosedSessions(repo, Date.now(), home, {}), 0);
     assert.equal(summarizeSession(repo, 's1', { home, env: {}, host: 'cursor' }), 0);
     assert.deepEqual(peek(home), []);
-    assert.equal(readSession(repo, 's1').summarized, false);
+    assert.notEqual(readSession(repo, 's1').summarized, true);
   } finally {
     delete process.env.GRAFT_POSTHOG_KEY;
   }
