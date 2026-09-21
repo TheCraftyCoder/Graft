@@ -3,7 +3,7 @@
  * Only servers whose binary is actually on PATH are eligible; a missing binary
  * simply means that language gets no LSP enrichment (the AST graph stands alone).
  */
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 
 export interface LspServer {
   /** graft language names (as produced by languageLabelOf/genericLangOf) this serves. */
@@ -31,7 +31,25 @@ const resolved = new Map<string, string | null>();
 function resolveCommand(cmd: string): string | null {
   if (resolved.has(cmd)) return resolved.get(cmd)!;
   let abs: string | null = null;
-  try { abs = execSync(`command -v ${cmd}`, { encoding: "utf8" }).trim() || null; } catch { abs = null; }
+  try {
+    const out = process.platform === "win32"
+      ? execFileSync("where.exe", [cmd], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          windowsHide: true,
+        })
+      : execSync(`command -v ${cmd}`, {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+
+    const hits = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    abs = process.platform === "win32"
+      ? (hits.find((p) => /\.(exe|cmd|bat)$/i.test(p)) ?? hits[0] ?? null)
+      : (hits[0] ?? null);
+  } catch {
+    abs = null;
+  }
   resolved.set(cmd, abs);
   return abs;
 }
