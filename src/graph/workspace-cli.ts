@@ -7,7 +7,7 @@
  */
 import { Graft } from "../engine.js";
 import { contextDirFor, ensureGitignored } from "../context/node-file.js";
-import { patchBuildConfig, type BuildConfig } from "../util/state.js";
+import { patchBuildConfig, readLspEnabled, type BuildConfig } from "../util/state.js";
 import type { EngineConfig } from "../ai/providers.js";
 import { formatAsk } from "../ask/ask.js";
 import type { Direction } from "./traverse.js";
@@ -40,6 +40,8 @@ export interface WorkspaceBuildOptions {
   followSubmodules?: boolean;
   /** An explicit CLI nested-clone choice to persist into every child repo. */
   followNestedRepos?: boolean;
+  /** Explicit --lsp choice to persist into every child repo. */
+  lsp?: boolean;
 }
 
 /** Build every git child into its own committable `graft/`, then replace the
@@ -59,12 +61,19 @@ export async function runWorkspaceBuild(root: string, opts: WorkspaceBuildOption
     if (opts.followNestedRepos !== undefined) {
       childConfigPatch.followNestedRepos = opts.followNestedRepos;
     }
+    if (opts.lsp === true) {
+      childConfigPatch.lsp = true;
+    }
     if (Object.keys(childConfigPatch).length > 0) {
       patchBuildConfig(childDir, childConfigPatch);
     }
     const engine = new Graft({ ...opts.childConfig, contextDir: undefined });
     if (opts.deep) await engine.init(childDir, { extensions: opts.extensions });
-    const g = await engine.graph(childDir, { llm: opts.deep, concurrency: opts.concurrency });
+    const g = await engine.graph(childDir, {
+      llm: opts.deep,
+      concurrency: opts.concurrency,
+      lsp: opts.lsp === true || readLspEnabled(childDir),
+    });
     console.log(`✓ ${childName}/: ${g.nodes} nodes, ${g.edges} edges, ${g.cards} cards [${g.languages.join(", ")}]`);
     for (const e of g.errors) console.error(`✗ ${childName}/: ${e}`);
   };
