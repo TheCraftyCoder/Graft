@@ -12,7 +12,7 @@ import { runHostsInit } from '../src/hosts/init.js';
 import { planRetract } from '../src/hosts/retract.js';
 import { mcpTargets } from '../src/hosts/mcp-config.js';
 import { upsertSection } from '../src/hosts/sections.js';
-import { instructionBody } from '../src/hosts/instructions.js';
+import { instructionHint } from '../src/hosts/instructions.js';
 
 function fixture(): { repo: string; home: string } {
   const repo = tmpRepo('agentsmd-repo');
@@ -39,7 +39,7 @@ test('agents-md init yields exactly one write and no Codex/OpenCode output', () 
   assert.ok(!existsSync(join(home, '.codex', 'config.toml')));
   assert.ok(!existsSync(join(home, '.codex', 'hooks.json')));
   assert.ok(!existsSync(join(repo, 'opencode.json')));
-  assert.ok(readFileSync(join(repo, 'AGENTS.md'), 'utf8').includes(instructionBody().trim().split('\n')[0]));
+  assert.ok(readFileSync(join(repo, 'AGENTS.md'), 'utf8').includes(instructionHint().trim()));
 });
 
 test('backwards compat: agents still writes AGENTS.md + Codex + OpenCode', () => {
@@ -53,7 +53,7 @@ test('backwards compat: agents still writes AGENTS.md + Codex + OpenCode', () =>
 
 test('retract keeps AGENTS.md when agents-md is the kept host', () => {
   const { repo, home } = fixture();
-  upsertSection(join(repo, 'AGENTS.md'), instructionBody());
+  upsertSection(join(repo, 'AGENTS.md'), instructionHint());
   const plan = planRetract(repo, { home, exclude: ['agents-md'] });
   assert.ok(!plan.some((r) => r.path === join(repo, 'AGENTS.md')));
   const without = planRetract(repo, { home });

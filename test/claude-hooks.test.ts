@@ -712,29 +712,22 @@ test('prompt hook omits --dir when GRAFT_DIR is unset (byte-identical argv to be
   }
 });
 
-test('post-edit passes --dir <resolved> to graft check when GRAFT_DIR is set', async () => {
+test('post-edit with GRAFT_DIR stays context-free and updates relocated state', async () => {
   const d = mkdtempSync(join(tmpdir(), 'graft-postedit-dir-'));
-  mkdirSync(join(d, 'elsewhere', '.graph'), { recursive: true });
-  writeFileSync(join(d, 'elsewhere', '.graph', 'wiring.json'),
-    JSON.stringify({ meta: { nodeCount: 0, edgeCount: 0, languages: [] }, nodes: [], edges: [] }));
+  mkdirSync(join(d, 'elsewhere'), { recursive: true });
+  const marker = join(d, 'cli-ran.txt');
   const stub = join(d, 'check-stub.cjs');
-  const argsFile = join(d, 'args-seen.json');
-  writeFileSync(
-    stub,
-    `const fs = require('fs');\n` +
-      `fs.writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)));\n` +
-      `process.stdout.write(JSON.stringify({ graph: { changed: [], added: [], removed: [] } }));\n`,
-  );
+  writeFileSync(stub, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran');\n`);
   process.env.CLAUDE_PROJECT_DIR = d;
   process.env.GRAFT_TEST_CLI = stub;
   process.env.GRAFT_DIR = 'elsewhere';
   try {
     const stdin = JSON.stringify({ tool_input: { file_path: join(d, 'src', 'auth.ts') } });
     await runWithStdin(stdin, () => main('post-edit'));
-    const argsSeen: string[] = JSON.parse(readFileSync(argsFile, 'utf8'));
-    const dirIdx = argsSeen.indexOf('--dir');
-    assert.ok(dirIdx !== -1, 'the check call carries --dir when GRAFT_DIR is set');
-    assert.equal(argsSeen[dirIdx + 1], resolveContextDir(d));
+    const stats = readStats(d)!;
+    assert.equal(stats.dirty, true);
+    assert.equal(stats.lastFile, 'auth.ts');
+    assert.equal(existsSync(marker), false, 'post-edit does not invoke graft check/query');
   } finally {
     delete process.env.GRAFT_TEST_CLI;
     delete process.env.CLAUDE_PROJECT_DIR;

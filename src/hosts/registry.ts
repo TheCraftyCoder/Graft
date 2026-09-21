@@ -47,7 +47,7 @@ export const HOSTS: HostTarget[] = [
     name: 'AGENTS.md instruction section only',
     kind: 'section',
     relPath: 'AGENTS.md',
-    content: instructionBody,
+    content: instructionHint,
     detect: () => false,
   },
   {
