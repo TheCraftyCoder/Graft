@@ -15,7 +15,7 @@
   <a href="https://nodejs.org"><img src="https://img.shields.io/node/v/%40nanonets%2Fgraft?style=for-the-badge&logo=nodedotjs&logoColor=white" /></a>
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6?style=for-the-badge&logo=typescript&logoColor=white" />
   <img src="https://img.shields.io/badge/License-MIT-20C997?style=for-the-badge" />
-  <a href="TELEMETRY.md"><img src="https://img.shields.io/badge/telemetry-anonymous%2C%20opt--out-546FFF?style=for-the-badge" /></a>
+  <a href="TELEMETRY.md"><img src="https://img.shields.io/badge/telemetry-disabled-546FFF?style=for-the-badge" /></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/NanoNets/Graft"><img src="https://img.shields.io/ossf-scorecard/github.com/NanoNets/Graft?style=for-the-badge&label=openssf%20scorecard" /></a>
   <a href="https://app.trailhq.com/get-started?step=pick"><img src="https://img.shields.io/badge/Trail%20Brain-try%20it-E5484D?style=for-the-badge&logoColor=white" /></a>
 </p>
@@ -251,7 +251,7 @@ _Summary, sources, links, and notes ship today in markdown nodes. The crux ships
 
 - **On your machine, no key, no network:** the structural code graph. `graft build` (wiring graph + per-file cards), `graft check`, and `graft ask` are deterministic tree-sitter — they never call a model.
 - **Through your provider key:** the LLM-written parts — `graft build --deep` adds the concept nodes (file summaries + node synthesis) and the per-symbol summaries and cruxes. graft is vendor-neutral: set `GRAFT_PROVIDER` (`openai` for any OpenAI-compatible endpoint, `anthropic` for the native API, or `litellm` / `orcarouter` for a gateway that speaks the OpenAI-compatible format), your `GRAFT_API_KEY`, `GRAFT_MODEL`, and — for the `openai` wire format — `GRAFT_BASE_URL` to point at OpenRouter, Fireworks, Groq, a LiteLLM proxy, a local server, or OpenAI itself. Or pass `--provider/--model/--api-key/--base-url` on the command line. (`OPENROUTER_API_KEY` still works as a deprecated fallback, and `ORCAROUTER_API_KEY` as a second one.)
-- **Anonymous usage stats** — the only network calls are the LLM requests you configured, a daily npm version check, and one batched usage ping. The ping carries buckets and fixed labels only: never your code, file paths, repo name, symbols, queries, or error messages. [`TELEMETRY.md`](TELEMETRY.md) is the complete list and `graft telemetry debug` prints exactly what your machine would send. Turn it off with `graft telemetry disable`, `DO_NOT_TRACK=1`, or by unchecking the box in `graft init`; it is off in CI and in any build from source.
+- **No usage telemetry in this fork** — anonymous usage metrics are compiled out and cannot be re-enabled with `GRAFT_POSTHOG_KEY` or `graft telemetry enable`. [`TELEMETRY.md`](TELEMETRY.md) documents the disabled legacy subsystem. Normal feature-specific network calls, such as an explicitly configured LLM provider or Trail Brain command, are separate from usage telemetry.
 
 See [`.env.example`](.env.example) for the full list of settings (model, base URL, graph directory).
 

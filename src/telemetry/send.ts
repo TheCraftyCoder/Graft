@@ -13,11 +13,6 @@
  * events in PostHog: no person profile is created, no identity is stored, and
  * the `distinct_id` is only ever the random install UUID.
  */
-import { posthogKey, posthogHost } from './key.js';
-
-/** Anything longer and the detached child is just holding a socket open. */
-const SEND_TIMEOUT_MS = 8000;
-
 export interface SendResult {
   ok: boolean;
   status?: number;
@@ -53,39 +48,9 @@ export function buildBatch(events: unknown[]): Record<string, unknown> {
   };
 }
 
-/**
- * The ingest path.
- *
- * `/batch/` only, with no fallback. An earlier revision also tried `/e/`,
- * because assign's `frontend/src/lib/posthog.ts` documents `events.nanonets.com`
- * as serving the older path and answering `400 invalid_payload` to bodies it
- * will not take. Probed directly, that host returns **401** to a well-formed
- * batch with a bad key — so `/batch/` is there and does parse the body, and the
- * historical 400 was gzip from `posthog-js` in a browser, which we never send.
- *
- * The fallback was therefore a second request that could not fire, and a branch
- * production never exercises is worse than no branch. If a future host needs
- * `/e/`, point `GRAFT_POSTHOG_HOST` at it and add the path back with evidence.
- */
-const INGEST_PATH = '/batch/';
-
 export async function sendBatch(events: unknown[]): Promise<SendResult> {
   if (events.length === 0) return { ok: true };
-  const key = posthogKey();
-  if (!key) return { ok: false, error: 'no key' };
-  try {
-    const res = await fetch(`${posthogHost()}${INGEST_PATH}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      // The one place the key is ever attached: the request body itself.
-      body: JSON.stringify({ api_key: key, ...buildBatch(events) }),
-      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
-    });
-    // A 4xx is our bug (a bad key, a malformed body) and retrying it forever
-    // would pin the queue at its cap; only 5xx and transport errors go back on
-    // the queue — see shouldRequeue in flush.ts.
-    return { ok: res.ok, status: res.status };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.name : 'unknown' };
-  }
+  // Defense in depth: even if a future caller bypasses telemetryOn(), this
+  // privacy build has no network send path for usage metrics.
+  return { ok: false, error: 'telemetry disabled in this build' };
 }

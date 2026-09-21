@@ -67,9 +67,9 @@ const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { execFileSync } = require('child_process');
 
-// Windows: Claude Code runs this helper without a console, so every console child it or the
-// graft module spawns would otherwise allocate a visible window. Default every child_process
-// call to windowsHide and resync the ESM bindings dist/claude/*.js import.
+// Windows: force every child process spawned by a Graft hook/statusline helper to start hidden.
+// Override even an explicit windowsHide:false so hook descendants cannot flash a console window.
+// Resync the ESM bindings because dist/claude/*.js imports child_process through ESM.
 if (process.platform === 'win32') {
   const cp = require('child_process');
   // exec/execSync take (cmd[, options][, cb]); the spawn/execFile family take
@@ -80,7 +80,7 @@ if (process.platform === 'win32') {
     const optIdx = hasArgsSlot && Array.isArray(args[1]) ? 2 : 1;
     const cur = args[optIdx];
     if (cur && typeof cur === 'object' && !Array.isArray(cur)) {
-      if (cur.windowsHide === undefined) args[optIdx] = { ...cur, windowsHide: true };
+      args[optIdx] = { ...cur, windowsHide: true };
     } else if (typeof cur === 'function') {
       args.splice(optIdx, 0, { windowsHide: true });
     } else {

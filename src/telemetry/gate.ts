@@ -74,7 +74,7 @@ export function telemetryOn(home?: string, env: NodeJS.ProcessEnv = process.env)
  *  user who thinks they disabled it can see which switch actually took. */
 export function explainOff(reason: OffReason): string {
   switch (reason) {
-    case 'no-key':        return 'off — this build has no telemetry key (a fork, or a local `npm run build`); nothing can be sent';
+    case 'no-key':        return 'off — telemetry is permanently disabled in this build; no usage metrics are recorded or sent';
     case 'do-not-track':  return 'off — DO_NOT_TRACK is set in this environment';
     case 'ci':            return 'off — this looks like CI';
     case 'disabled':      return 'off — you disabled it (`graft telemetry enable` to turn it back on)';

@@ -37,3 +37,10 @@ test('statusline calls main(); hooks passes the event arg', () => {
   assert.match(statuslineShim(BAKED), /m\.main\(\)/);
   assert.match(hooksShim(BAKED), /m\.main\(process\.argv\[2\]\)/);
 });
+
+
+test('Windows child-process patch always forces windowsHide true', () => {
+  const src = hooksShim(BAKED);
+  assert.match(src, /args\[optIdx\] = \{ \.\.\.cur, windowsHide: true \};/);
+  assert.doesNotMatch(src, /cur\.windowsHide === undefined/);
+});
