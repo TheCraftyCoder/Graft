@@ -9,17 +9,15 @@
  * NOT suppressed by `--global false`; only `--no-hooks` skips them.
  *
  * The shim is the same one Claude Code and Codex use (`hooksShim`): it locates
- * the installed `@nanonets/graft` package and calls `hooks.js`' `main(argv[2])`,
- * so the sub-command in each entry (`cursor-post-tool`, `cursor-mcp`,
- * `cursor-session-end`) routes to the matching handler in `../claude/hooks.ts`.
+ * the installed `@nanonets/graft` package and routes native Cursor events to
+ * the shared freshness handlers in `../claude/hooks.ts`.
  *
- * Events, confirmed against the Cursor hooks docs (the matcher/tool-name shape
- * is load-bearing, so it is read from the docs, not guessed):
- *   - `postToolUse` (matcher `Read|Grep|Glob|Search|Shell`) → classify a source read
- *     vs a graft-CLI Shell call; MCP tools are skipped here so they aren't
- *     double-counted against `afterMCPExecution`.
- *   - `afterMCPExecution` → the graft MCP calls, savings parsed from `result_json`.
- *   - `sessionEnd` → roll the closed session up into `session_summary` as Cursor.
+ * Current hooks are deliberately minimal:
+ *   - `afterFileEdit` → mark the graph dirty and remember the edited file.
+ *   - `stop` → one background sync at the end of the turn.
+ *
+ * Older telemetry events remain recognized during migration so re-init can
+ * remove Graft-owned entries without touching foreign hooks.
  */
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -49,7 +47,7 @@ export function cursorHookTargets(repo: string): PlannedWrite[] {
     {
       hostId: 'cursor', id: 'cursor-hook-shim',
       path: shimPathFor(repo),
-      scope: 'repo', kind: 'hook', what: 'session-scoring hook shim',
+      scope: 'repo', kind: 'hook', what: 'freshness hook shim',
     },
     {
       hostId: 'cursor', id: 'cursor-hooks',
