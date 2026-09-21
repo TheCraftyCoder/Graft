@@ -1,7 +1,6 @@
 /**
- * Cursor project hooks (https://cursor.com/docs/hooks) — the adapter that lets
- * Cursor produce the same session usage mix Claude Code does (graft reads vs
- * Read/Grep, plus token savings), which Cursor otherwise has no way to record.
+ * Lightweight Cursor project hooks (https://cursor.com/docs/hooks): edit +
+ * turn-end freshness only. Retrieval stays on-demand through skills/MCP.
  *
  * Unlike the Codex hooks (which live under `~/.codex` and fire in every repo),
  * Cursor project hooks are **repo-local**: `.cursor/hooks.json` + a shim under
@@ -10,17 +9,15 @@
  * NOT suppressed by `--global false`; only `--no-hooks` skips them.
  *
  * The shim is the same one Claude Code and Codex use (`hooksShim`): it locates
- * the installed `@nanonets/graft` package and calls `hooks.js`' `main(argv[2])`,
- * so the sub-command in each entry (`cursor-post-tool`, `cursor-mcp`,
- * `cursor-session-end`) routes to the matching handler in `../claude/hooks.ts`.
+ * the installed `@nanonets/graft` package and routes native Cursor events to
+ * the shared freshness handlers in `../claude/hooks.ts`.
  *
- * Events, confirmed against the Cursor hooks docs (the matcher/tool-name shape
- * is load-bearing, so it is read from the docs, not guessed):
- *   - `postToolUse` (matcher `Read|Grep|Glob|Search|Shell`) → classify a source read
- *     vs a graft-CLI Shell call; MCP tools are skipped here so they aren't
- *     double-counted against `afterMCPExecution`.
- *   - `afterMCPExecution` → the graft MCP calls, savings parsed from `result_json`.
- *   - `sessionEnd` → roll the closed session up into `session_summary` as Cursor.
+ * Current hooks are deliberately minimal:
+ *   - `afterFileEdit` → mark the graph dirty and remember the edited file.
+ *   - `stop` → one background sync at the end of the turn.
+ *
+ * Older telemetry events remain recognized during migration so re-init can
+ * remove Graft-owned entries without touching foreign hooks.
  */
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -50,27 +47,28 @@ export function cursorHookTargets(repo: string): PlannedWrite[] {
     {
       hostId: 'cursor', id: 'cursor-hook-shim',
       path: shimPathFor(repo),
-      scope: 'repo', kind: 'hook', what: 'session-scoring hook shim',
+      scope: 'repo', kind: 'hook', what: 'freshness hook shim',
     },
     {
       hostId: 'cursor', id: 'cursor-hooks',
       path: configPathFor(repo),
-      scope: 'repo', kind: 'hook', what: 'postToolUse / afterMCPExecution / sessionEnd',
+      scope: 'repo', kind: 'hook', what: 'afterFileEdit / stop',
     },
   ];
 }
 
 /**
- * The graft hook entries Cursor should carry. `matcher` is set only where Cursor
- * filters by tool (postToolUse); `afterMCPExecution` fires for every MCP tool and
- * `sessionEnd` for none, so they carry no matcher.
+ * Lightweight Cursor active layer. afterFileEdit marks the graph dirty and stop
+ * performs one background sync. Legacy telemetry event names remain only so
+ * upgrades remove Graft-owned entries from older installs.
  */
-interface DesiredEntry { event: string; matcher?: string; sub: string; }
+const GRAFT_EVENTS = ['postToolUse', 'afterMCPExecution', 'sessionEnd', 'afterFileEdit', 'stop'] as const;
+type GraftEvent = typeof GRAFT_EVENTS[number];
+interface DesiredEntry { event: GraftEvent; matcher?: string; sub: string; }
 function desiredEntries(): DesiredEntry[] {
   return [
-    { event: 'postToolUse', matcher: 'Read|Grep|Glob|Search|Shell', sub: 'cursor-post-tool' },
-    { event: 'afterMCPExecution', sub: 'cursor-mcp' },
-    { event: 'sessionEnd', sub: 'cursor-session-end' },
+    { event: 'afterFileEdit', sub: 'post-edit' },
+    { event: 'stop', sub: 'stop' },
   ];
 }
 
@@ -95,12 +93,22 @@ export function installCursorHooks(repo: string): ConfigWrite[] {
   const hooks = (root.hooks ??= {});
   if (typeof hooks !== 'object' || hooks === null || Array.isArray(hooks)) return [shimWrite, skipped];
 
-  for (const d of desiredEntries()) {
-    if (hooks[d.event] !== undefined && !Array.isArray(hooks[d.event])) return [shimWrite, skipped];
-    const prior: unknown[] = Array.isArray(hooks[d.event]) ? hooks[d.event] : [];
+  for (const event of GRAFT_EVENTS) {
+    if (hooks[event] !== undefined && !Array.isArray(hooks[event])) return [shimWrite, skipped];
+  }
+  const desired = new Map<GraftEvent, DesiredEntry>(desiredEntries().map((d) => [d.event, d] as const));
+  for (const event of GRAFT_EVENTS) {
+    const prior: unknown[] = Array.isArray(hooks[event]) ? hooks[event] : [];
+    const foreign = prior.filter((e) => !isGraftEntry(e));
+    const d = desired.get(event);
+    if (!d) {
+      if (foreign.length) hooks[event] = foreign;
+      else delete hooks[event];
+      continue;
+    }
     const command = `node "${shimPath}" ${d.sub}`;
     const entry = d.matcher ? { matcher: d.matcher, command } : { command };
-    hooks[d.event] = [...prior.filter((e) => !isGraftEntry(e)), entry];
+    hooks[event] = [...foreign, entry];
   }
 
   if (JSON.stringify(root) === before) return [shimWrite, { id: 'cursor-hooks', path: cfgPath, action: 'unchanged' }];

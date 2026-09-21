@@ -14,6 +14,7 @@ import { installCodexHooks } from './codex-hooks.js';
 import { installCursorHooks } from './cursor-hooks.js';
 import type { ConfigWrite } from './config-write.js';
 import { installAntigravitySkill } from './antigravity.js';
+import { installHostSkills } from './host-skills.js';
 
 export interface HostsInitResult {
   written: { id: string; path: string; action: string }[];
@@ -21,6 +22,7 @@ export interface HostsInitResult {
   unknown: string[];
   mcp: McpWrite[];
   hooks: ConfigWrite[];
+  skills: ConfigWrite[];
 }
 
 function probeFor(home: string, repo: string): DetectProbe {
@@ -94,10 +96,12 @@ export function runHostsInit(
     !ok('hook', 'repo') || !selected.some((h) => h.id === 'cursor')
       ? []
       : installCursorHooks(repo);
-  // Antigravity's skill is a global write too, so --no-global suppresses it as well.
+  const skills = installHostSkills(repo, selected.map((h) => h.id), { home, global: opts.global });
+  // Antigravity already has a native global skill target. Keep it, but report it
+  // as a skill rather than mixing it into the hook result.
   const antigravitySkill =
     !ok('skill', 'global') || !selected.some((h) => h.id === 'antigravity')
       ? []
       : installAntigravitySkill(home);
-  return { written, skipped, unknown, mcp, hooks: [...hooks, ...cursorHooks, ...antigravitySkill] };
+  return { written, skipped, unknown, mcp, hooks: [...hooks, ...cursorHooks], skills: [...skills, ...antigravitySkill] };
 }

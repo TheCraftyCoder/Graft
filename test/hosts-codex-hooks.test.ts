@@ -35,23 +35,18 @@ test('writes shim + hooks.json entry, idempotent on re-run', () => {
   const shim = join(home, '.codex', 'hooks', 'graft', 'graft-hooks.cjs');
   assertRunnableShim(shim, 'shim is executable');
   const cfg = JSON.parse(readFileSync(join(home, '.codex', 'hooks.json'), 'utf8'));
-  // Full Claude-Code parity: retrieval on prompt, orientation on start, blast
-  // radius on edit, one background sync at turn end.
   const sub = (event: string) => cfg.hooks[event][0].hooks[0].command.match(/cjs" (\S+)$/)?.[1];
-  assert.equal(sub('UserPromptSubmit'), 'prompt', 'the coupling-seed retrieval hook');
-  assert.equal(sub('SessionStart'), 'session-start', 'orientation hook');
-  assert.equal(sub('PostToolUse'), 'post-edit', 'edit hook (sync split out to Stop)');
+  assert.equal(sub('PostToolUse'), 'post-edit', 'edit hook');
   assert.equal(sub('Stop'), 'stop', 'background-sync hook');
-  // the edit matcher must include Codex's native edit tool
+  assert.equal(cfg.hooks.SessionStart, undefined, 'no always-on orientation hook');
+  assert.equal(cfg.hooks.UserPromptSubmit, undefined, 'no per-prompt retrieval injection');
   assert.match(cfg.hooks.PostToolUse[0].matcher, /apply_patch/);
-  // Codex ignores matcher for these, so we omit it rather than write a dead field
-  assert.ok(!('matcher' in cfg.hooks.UserPromptSubmit[0]), 'no matcher on UserPromptSubmit');
   assert.ok(!('matcher' in cfg.hooks.Stop[0]), 'no matcher on Stop');
 
   const again = installCodexHooks(home);
   assert.deepEqual(again.map((x) => x.action), ['unchanged', 'unchanged'], 'idempotent');
   const after = JSON.parse(readFileSync(join(home, '.codex', 'hooks.json'), 'utf8'));
-  for (const ev of ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop'])
+  for (const ev of ['PostToolUse', 'Stop'])
     assert.equal(after.hooks[ev].length, 1, `${ev} not duplicated on re-run`);
 });
 
@@ -74,6 +69,8 @@ test('foreign hook entries are preserved; stale graft entries replaced', () => {
 
 test('editedFilePath reads the touched file from BOTH host edit-tool shapes', () => {
   const dir = '/repo';
+  // Cursor afterFileEdit: top-level absolute path.
+  assert.equal(editedFilePath({ file_path: '/repo/src/cursor.ts' }, dir), '/repo/src/cursor.ts');
   // Claude Code: Write/Edit state the absolute path directly
   assert.equal(
     editedFilePath({ tool_input: { file_path: '/repo/src/a.ts' } }, dir),
@@ -124,4 +121,27 @@ test('re-heals shim exec bit when a prior install had its mode stripped', () => 
   // shim in place, which is all "re-healing" can mean without an exec bit.
   installCodexHooks(home);
   assertRunnableShim(shim, 'exec bit restored after re-run');
+});
+
+test('re-init removes legacy Graft SessionStart/UserPromptSubmit hooks but preserves foreign ones', () => {
+  const home = fresh();
+  mkdirSync(join(home, '.codex'), { recursive: true });
+  const shim = join(home, '.codex', 'hooks', 'graft', 'graft-hooks.cjs');
+  writeFileSync(join(home, '.codex', 'hooks.json'), JSON.stringify({
+    hooks: {
+      SessionStart: [
+        { hooks: [{ type: 'command', command: `node "${shim}" session-start` }] },
+        { hooks: [{ type: 'command', command: 'foreign-start' }] },
+      ],
+      UserPromptSubmit: [
+        { hooks: [{ type: 'command', command: `node "${shim}" prompt` }] },
+        { hooks: [{ type: 'command', command: 'foreign-prompt' }] },
+      ],
+    },
+  }));
+  installCodexHooks(home);
+  const hooks = JSON.parse(readFileSync(join(home, '.codex', 'hooks.json'), 'utf8')).hooks;
+  assert.deepEqual(hooks.SessionStart.map((x: any) => x.hooks[0].command), ['foreign-start']);
+  assert.deepEqual(hooks.UserPromptSubmit.map((x: any) => x.hooks[0].command), ['foreign-prompt']);
+  assert.ok(hooks.PostToolUse && hooks.Stop);
 });

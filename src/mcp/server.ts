@@ -69,22 +69,17 @@ function advertised(root: string, dirOverride?: string): typeof TOOLS {
  * lookup misses. The caller already knows it.
  */
 export function startMcpServer(root: string, dirOverride?: string, version = '0'): void {
-  // The self-maintenance pass, run once at boot. This is the ONLY channel that
-  // reaches hosts with no hook support (Cursor, and any plain MCP client): it
-  // refreshes rule files an older `graft init` wrote, and kicks off the cached
-  // registry check. Both are fail-soft, and the resulting lines ride along in
-  // `instructions` below — stdout is protocol-only, so there is nowhere else to
-  // put them. Never blocks: the registry fetch happens in a detached child.
-  const upkeep = runUpkeep(root, runningVersion()).lines;
+  // User-scope MCP fallback starts Graft in every project. Do no upkeep,
+  // background telemetry work, or model-context injection unless this checkout
+  // actually has (or inherits) a graph. A later tools/list still probes
+  // dynamically, so building a graph after server startup can expose the tools.
+  const activeAtBoot = advertised(root, dirOverride).length > 0;
+  const upkeep = activeAtBoot ? runUpkeep(root, runningVersion()).lines : [];
   for (const line of upkeep) console.error(line);
-  // Same deal for the telemetry queue: flushed from a detached child at boot, so
-  // a Cursor user who never touches the CLI still gets their events out.
-  //
-  // Deliberately NOT the first-run notice. This server's stderr goes to an editor
-  // log nobody reads, so printing it here would mark the disclosure as shown
-  // without anyone having seen it. It stays pending for the next CLI command,
-  // and `graft init`'s picker is the channel that reached this user already.
-  maybeFlushInBackground();
+
+  // Same deal for the telemetry queue: only a repo actively using Graft should
+  // pay even the detached-process startup cost.
+  if (activeAtBoot) maybeFlushInBackground();
 
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
   rl.on('line', (line) => {
@@ -100,15 +95,21 @@ export function startMcpServer(root: string, dirOverride?: string, version = '0'
     const { id, method, params } = msg;
     const isNotification = id === undefined;
     switch (method) {
-      case 'initialize':
+      case 'initialize': {
+        // A user-scope MCP registration starts Graft in repos that never opted in.
+        // In those repos advertise no tools AND emit no instructions/upkeep text:
+        // globally installed Graft should cost zero model context outside built repos.
+        const instructions = activeAtBoot
+          ? [upkeep.length ? upkeep.join('\n') : '', mcpInstructions()].filter(Boolean).join('\n\n')
+          : '';
         reply(id, {
           protocolVersion: params?.protocolVersion ?? '2024-11-05',
           capabilities: { tools: {} },
           serverInfo: { name: 'graft', version },
-          // The one channel that survives tool deferral — see ./instructions.ts.
-          instructions: upkeep.length ? `${upkeep.join('\n')}\n\n${mcpInstructions()}` : mcpInstructions(),
+          ...(instructions ? { instructions } : {}),
         });
         return;
+      }
       case 'notifications/initialized':
       case 'notifications/cancelled':
         return; // notifications get no response

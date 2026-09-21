@@ -89,3 +89,9 @@ test('agents-md is instruction-only: never detected, still selectable', () => {
   assert.equal(host.detect(probeFor(home, repo)), false);
   assert.ok(!detectHosts(probeFor(home, repo)).some((h) => h.id === 'agents-md'));
 });
+
+test('a generic repo .agents directory does not auto-detect Antigravity', () => {
+  const home = fresh(); const repo = fresh();
+  mkdirSync(join(repo, '.agents'));
+  assert.ok(!detectHosts(probeFor(home, repo)).some((h) => h.id === 'antigravity'));
+});

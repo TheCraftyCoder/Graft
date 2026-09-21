@@ -130,6 +130,7 @@ test('a fresh worktree advertises every tool, on the strength of its parent', as
 
 test('initialize carries instructions — the layer that survives tool deferral', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'graft-mcpsrv-instr-'));
+  await buildGraph(dir);
   const rs = await rpc(
     [{ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '0' } } }],
     dir,
@@ -149,6 +150,17 @@ test('initialize carries instructions — the layer that survives tool deferral'
   assert.ok(instructions.length < 1000, `instructions must stay under 1000 chars, got ${instructions.length}`);
   assert.match(serverInfo.version, /^\d+\.\d+\.\d+$/, 'real version, not the old hardcoded 0');
   assert.equal(instructions, mcpInstructions(), 'the wire text is the generated text');
+});
+
+test('global MCP fallback injects no Graft instructions in an unbuilt repo', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'graft-mcpsrv-unbuilt-instr-'));
+  const rs = await rpc(
+    [{ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '0' } } }],
+    dir,
+    1,
+  );
+  assert.equal(rs[0].result.instructions, undefined);
+  assert.deepEqual(await listTools(dir), []);
 });
 
 test('MCP steering is selective, not graft-first, and makes no savings claims', () => {

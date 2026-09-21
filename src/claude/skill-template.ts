@@ -4,7 +4,7 @@
 export function skillTemplate(): string {
   return `---
 name: graft
-description: Use Graft selectively for structural repository questions such as callers, blast radius, file APIs, dependency topology, and unfamiliar architecture.
+description: Structural repository navigation for unfamiliar architecture, callers/callees, blast radius, dependency topology, and compact file APIs. Use for relationships or architectural discovery; do not use for direct known file/symbol/literal/RPC/type/store lookups.
 ---
 
 # Graft

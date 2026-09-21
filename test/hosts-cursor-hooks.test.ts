@@ -33,22 +33,20 @@ test('writes shim + hooks.json (version 1), idempotent on re-run', () => {
   const cfg = JSON.parse(readFileSync(cfgPath(repo), 'utf8'));
   assert.equal(cfg.version, 1, 'Cursor hooks.json carries a schema version');
   const sub = (event: string) => cfg.hooks[event][0].command.match(/cjs" (\S+)$/)?.[1];
-  assert.equal(sub('postToolUse'), 'cursor-post-tool');
-  assert.equal(sub('afterMCPExecution'), 'cursor-mcp');
-  assert.equal(sub('sessionEnd'), 'cursor-session-end');
-  // postToolUse filters to the read/shell tools; the MCP + end hooks take every event.
-  assert.match(cfg.hooks.postToolUse[0].matcher, /Read\|Grep\|Glob\|Search\|Shell/);
-  assert.ok(!('matcher' in cfg.hooks.afterMCPExecution[0]), 'no matcher on afterMCPExecution');
-  assert.ok(!('matcher' in cfg.hooks.sessionEnd[0]), 'no matcher on sessionEnd');
+  assert.equal(sub('afterFileEdit'), 'post-edit');
+  assert.equal(sub('stop'), 'stop');
+  assert.equal(cfg.hooks.postToolUse, undefined);
+  assert.equal(cfg.hooks.afterMCPExecution, undefined);
+  assert.equal(cfg.hooks.sessionEnd, undefined);
 
   const again = installCursorHooks(repo);
   assert.deepEqual(again.map((x) => x.action), ['unchanged', 'unchanged'], 'idempotent');
   const after = JSON.parse(readFileSync(cfgPath(repo), 'utf8'));
-  for (const ev of ['postToolUse', 'afterMCPExecution', 'sessionEnd'])
+  for (const ev of ['afterFileEdit', 'stop'])
     assert.equal(after.hooks[ev].length, 1, `${ev} not duplicated on re-run`);
 });
 
-test('foreign hook entries and a pre-existing version are preserved; stale graft entries replaced', () => {
+test('foreign hook entries and a pre-existing version are preserved while stale Graft telemetry is removed', () => {
   const repo = fresh();
   mkdirSync(join(repo, '.cursor'), { recursive: true });
   writeFileSync(cfgPath(repo), JSON.stringify({
@@ -56,16 +54,15 @@ test('foreign hook entries and a pre-existing version are preserved; stale graft
     hooks: {
       postToolUse: [
         { command: 'other-tool.sh' },
-        { command: 'node /old/.cursor/hooks/graft-hooks.cjs cursor-post-tool' },
+        { command: 'node "/old/.cursor/hooks/graft-hooks.cjs" cursor-post-tool' },
       ],
     },
   }));
   installCursorHooks(repo);
-  const entries = JSON.parse(readFileSync(cfgPath(repo), 'utf8')).hooks.postToolUse;
-  assert.equal(entries.length, 2, 'foreign kept, stale graft replaced by fresh');
-  assert.ok(entries.some((e: any) => e.command === 'other-tool.sh'), 'foreign entry preserved');
-  assert.ok(entries.some((e: any) => /graft-hooks\.cjs" cursor-post-tool$/.test(e.command)), 'fresh graft entry present');
-  assert.ok(!JSON.stringify(entries).includes('/old/'), 'stale graft entry removed');
+  const hooks = JSON.parse(readFileSync(cfgPath(repo), 'utf8')).hooks;
+  assert.deepEqual(hooks.postToolUse.map((e: any) => e.command), ['other-tool.sh']);
+  assert.ok(hooks.afterFileEdit && hooks.stop, 'fresh lightweight hooks installed');
+  assert.ok(!JSON.stringify(hooks).includes('/old/'), 'stale graft entry removed');
 });
 
 test('unparseable hooks.json is never rewritten', () => {
@@ -102,4 +99,24 @@ test('--no-hooks skips the Cursor hook files (rule file still written)', () => {
   assert.ok(!existsSync(shimPath(repo)), 'no shim under --no-hooks');
   assert.ok(!r.hooks.some((h) => h.id?.startsWith('cursor')), 'no cursor hook writes reported');
   assert.ok(existsSync(join(repo, '.cursor', 'rules', 'graft.mdc')), 'the rule file is still written');
+});
+
+test('re-init removes legacy Graft telemetry events and preserves foreign entries', () => {
+  const repo = fresh();
+  mkdirSync(join(repo, '.cursor'), { recursive: true });
+  const old = 'node "/old/.cursor/hooks/graft-hooks.cjs" ';
+  writeFileSync(cfgPath(repo), JSON.stringify({
+    version: 1,
+    hooks: {
+      postToolUse: [{ command: old + 'cursor-post-tool' }, { command: 'foreign-post' }],
+      afterMCPExecution: [{ command: old + 'cursor-mcp' }],
+      sessionEnd: [{ command: old + 'cursor-session-end' }],
+    },
+  }));
+  installCursorHooks(repo);
+  const hooks = JSON.parse(readFileSync(cfgPath(repo), 'utf8')).hooks;
+  assert.deepEqual(hooks.postToolUse.map((x: any) => x.command), ['foreign-post']);
+  assert.equal(hooks.afterMCPExecution, undefined);
+  assert.equal(hooks.sessionEnd, undefined);
+  assert.ok(hooks.afterFileEdit && hooks.stop);
 });

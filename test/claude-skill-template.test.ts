@@ -6,7 +6,8 @@ test('skill template is concise, selective, and evidence-aware', () => {
   const src = skillTemplate();
   assert.ok(src.startsWith('---\n'), 'starts with YAML frontmatter');
   assert.match(src, /^name: graft$/m);
-  assert.match(src, /^description: Use Graft selectively/m);
+  assert.match(src, /^description: Structural repository navigation/m);
+  assert.match(src, /do not use for direct known file\/symbol\/literal\/RPC\/type\/store lookups/);
   const body = src.split(/\n---\n/)[1] ?? '';
   assert.ok(body.trim().length > 0);
   assert.match(body, /source, `rg`, or LSP\/reference search directly/);

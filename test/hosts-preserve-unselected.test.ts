@@ -79,7 +79,8 @@ test('--preserve-unselected leaves every unselected host byte-identical', () => 
   // Home: nothing at all may change (--no-global, and no selected host is global).
   assert.deepEqual(diff(beforeHome, snapshot(home)), { changed: [], created: [], deleted: [] });
 
-  // Repo: only Claude / Grok / graft cache files may differ; everything else is identical.
+  // Repo: only Claude / Grok / graft cache files may differ. agents-md rewrites the same tiny
+  // shared AGENTS pointer, so AGENTS.md remains byte-identical to the prewired fixture.
   const afterRepo = snapshot(repo);
   const d = diff(beforeRepo, afterRepo);
   assert.deepEqual(d.deleted.map((p) => rel(repo, p)), []);

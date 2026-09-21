@@ -7,7 +7,7 @@
  * kind: 'owned'   → graft owns the whole file; overwrite it each run.
  */
 import { join } from 'node:path';
-import { instructionBody, cursorRule, kiroSteering, windsurfRule } from './instructions.js';
+import { instructionBody, instructionHint, cursorRule, kiroSteering, windsurfRule } from './instructions.js';
 import { skillTemplate } from '../claude/skill-template.js';
 
 export interface DetectProbe {
@@ -32,7 +32,7 @@ export const HOSTS: HostTarget[] = [
     name: 'AGENTS.md hosts (Codex-style CLIs, editors that read AGENTS.md)',
     kind: 'section',
     relPath: 'AGENTS.md',
-    content: instructionBody,
+    content: instructionHint,
     detect: (p) =>
       p.dirExists(join(p.home, '.codex')) ||
       p.dirExists(join(p.home, '.config', 'opencode')) ||
@@ -47,7 +47,7 @@ export const HOSTS: HostTarget[] = [
     name: 'AGENTS.md instruction section only',
     kind: 'section',
     relPath: 'AGENTS.md',
-    content: instructionBody,
+    content: instructionHint,
     detect: () => false,
   },
   {
@@ -71,7 +71,7 @@ export const HOSTS: HostTarget[] = [
     name: 'Gemini CLI',
     kind: 'section',
     relPath: 'GEMINI.md',
-    content: instructionBody,
+    content: instructionHint,
     detect: (p) => p.dirExists(join(p.home, '.gemini')),
   },
   {
@@ -87,7 +87,7 @@ export const HOSTS: HostTarget[] = [
     name: 'Hermes Agent (Nous Research)',
     kind: 'section',
     relPath: 'AGENTS.md',
-    content: instructionBody,
+    content: instructionHint,
     // Hermes is repo-aware: it reads AGENTS.md at the repo root (and the
     // Graft-for-Hermes plugin keeps the graph fresh on every session start).
     detect: (p) =>
@@ -100,21 +100,21 @@ export const HOSTS: HostTarget[] = [
     name: 'Google Antigravity',
     kind: 'section',
     relPath: 'AGENTS.md',
-    content: instructionBody,
+    content: instructionHint,
     // Antigravity-specific markers, NOT the bare `~/.gemini` (which is also Gemini CLI's):
     // its global config dir (`~/.gemini/config/`, where mcp_config.json + hooks.json live)
-    // or a workspace `.agents/` dir. Keeps a plain Gemini-CLI user from auto-selecting it.
+    // or its dedicated CLI dir. `.agents/` is a cross-agent skill standard and
+    // must not auto-select Antigravity.
     detect: (p) =>
       p.dirExists(join(p.home, '.gemini', 'config')) ||
-      p.dirExists(join(p.home, '.gemini', 'antigravity-cli')) ||
-      p.dirExists(join(p.repo, '.agents')),
+      p.dirExists(join(p.home, '.gemini', 'antigravity-cli')),
   },
   {
     id: 'copilot',
     name: 'GitHub Copilot',
     kind: 'section',
     relPath: join('.github', 'copilot-instructions.md'),
-    content: instructionBody,
+    content: instructionHint,
     detect: (p) => p.dirExists(join(p.repo, '.github')),
   },
   {

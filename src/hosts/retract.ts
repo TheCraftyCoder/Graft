@@ -31,6 +31,7 @@ import { ALL_MARKERS, type Markers } from './sections.js';
 import { mcpTargets, stripTomlSection } from './mcp-config.js';
 import { hookTargets } from './codex-hooks.js';
 import { antigravitySkillTargets } from './antigravity.js';
+import { hostSkillTargets } from './host-skills.js';
 import { claudeGlobalTargets, globalHelpersDir } from './claude-global.js';
 import { claudeTargets } from '../claude/init.js';
 import { isGraftAllowEntry, isGraftFooterRegex } from '../claude/settings-merge.js';
@@ -374,6 +375,7 @@ function targets(repo: string, opts: RetractOpts): Target[] {
     if (exclude.has(host.id)) keptPaths.add(join(repo, host.relPath));
   }
   for (const t of mcpTargets(repo, [...exclude], { home })) keptPaths.add(t.path);
+  for (const t of hostSkillTargets(repo, [...exclude], { home })) keptPaths.add(t.path);
   if (exclude.has('claude')) {
     for (const t of claudeTargets(repo)) keptPaths.add(t.path);
     for (const t of claudeGlobalTargets(home)) keptPaths.add(t.path);
@@ -410,9 +412,16 @@ function targets(repo: string, opts: RetractOpts): Target[] {
     });
   }
 
-  // 2. MCP registrations. Asking for every host id at once yields the union of
-  //    config files, each already carrying its format and top-level key.
   const allIds = HOSTS.map((h) => h.id).filter((id) => !exclude.has(id));
+
+  // 2. On-demand skill files.
+  for (const t of hostSkillTargets(repo, allIds, { home })) {
+    if (opts.global === false && t.scope === 'global') continue;
+    add({ hostId:t.hostId, path:t.path, what:t.what, scope:t.scope, run:(a)=>removeFile(t.path,a) });
+  }
+
+  // 3. MCP registrations. Asking for every host id at once yields the union of
+  //    config files, each already carrying its format and top-level key.
   for (const t of mcpTargets(repo, allIds, { home })) {
     if (opts.global === false && t.scope === 'global') continue;
     add({

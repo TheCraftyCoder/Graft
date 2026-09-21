@@ -1161,6 +1161,7 @@ function wireTarget(
       for (const w of r.written) console.error(`✓ ${w.id}: ${w.path} (${w.action})`);
       for (const m of r.mcp) console.error(`✓ mcp ${m.id}: ${m.path} (${m.action})`);
       for (const h of r.hooks) console.error(`✓ hook ${h.id}: ${h.path} (${h.action})`);
+      for (const sk of r.skills) console.error(`✓ skill ${sk.id}: ${sk.path} (${sk.action})`);
       // Only worth saying when there was actually something out-of-repo to skip.
       if (opts.global === false && selectedWrites(plan, ids).some((w) => w.scope === "global"))
         console.error("· skipped out-of-repo writes (--no-global)");
