@@ -28,7 +28,7 @@ test('explicit agents list overrides detection and flags unknown ids', () => {
   const r = runHostsInit(repo, { home, agents: ['gemini', 'nope'] });
   assert.deepEqual(r.written.map((w) => w.id), ['gemini']);
   assert.deepEqual(r.unknown, ['nope']);
-  assert.ok(readFileSync(join(repo, 'GEMINI.md'), 'utf8').includes('graft ask'));
+  assert.ok(readFileSync(join(repo, 'GEMINI.md'), 'utf8').includes('on-demand `graft` skill'));
 });
 
 test('all writes every host and re-run converges (idempotent)', () => {
@@ -51,7 +51,7 @@ test('preserves user content around the fenced section', () => {
   assert.deepEqual(r.written.map((w) => w.id), ['copilot']);
   const text = readFileSync(target, 'utf8');
   assert.ok(text.startsWith('# House rules'));
-  assert.ok(text.includes('graft ask'));
+  assert.ok(text.includes('on-demand `graft` skill'));
 });
 
 test('CLI: graft init --agents gemini writes GEMINI.md and exits 0', () => {

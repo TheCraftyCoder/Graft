@@ -219,6 +219,7 @@ test('a full init is fully retractable, and retraction is idempotent', () => {
     join('.claude', 'helpers', 'graft-hooks.cjs'),
     join('.claude', 'skills', 'graft', 'SKILL.md'),
     join('.cursor', 'rules', 'graft.mdc'),
+    join('.agents', 'skills', 'graft', 'SKILL.md'),
     '.mcp.json',
   ]) {
     assert.ok(!existsSync(join(d, rel)), `${rel} should be gone`);

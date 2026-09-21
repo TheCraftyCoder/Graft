@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { instructionBody, cursorRule, kiroSteering, windsurfRule } from '../src/hosts/instructions.js';
+import { instructionBody, instructionHint, cursorRule, kiroSteering, windsurfRule } from '../src/hosts/instructions.js';
 
 test('canonical body teaches selective structural use and source verification', () => {
   const b = instructionBody();
@@ -21,18 +21,29 @@ test('canonical body teaches selective structural use and source verification', 
   assert.ok(!/\bhook|statusline\b/i.test(b), 'no host-specific machinery in the shared body');
 });
 
-test('cursor rule has alwaysApply frontmatter, selective description, and the body', () => {
+test('always-on hint is tiny and points to progressive disclosure', () => {
+  const h = instructionHint();
+  assert.match(h, /on-demand `graft` skill/);
+  assert.match(h, /navigation evidence/);
+  assert.doesNotMatch(h, /graft ask|graft callers|graft skeleton|graft grep|graft map/);
+  assert.ok(h.length < 400, `always-on hint should stay tiny, got ${h.length} chars`);
+});
+
+test('cursor compatibility rule is no longer always-on', () => {
   const r = cursorRule();
-  assert.match(r, /^---\ndescription: Use Graft selectively.+\nalwaysApply: true\n---\n/);
-  assert.ok(r.includes(instructionBody()));
+  assert.match(r, /alwaysApply: false/);
+  assert.ok(r.includes(instructionHint()));
+  assert.ok(!r.includes(instructionBody()));
 });
 
-test('kiro steering has inclusion: always frontmatter and the body', () => {
+test('kiro compatibility steering is manual; the skill handles automatic discovery', () => {
   const r = kiroSteering();
-  assert.match(r, /^---\ninclusion: always\n---\n/);
-  assert.ok(r.includes(instructionBody()));
+  assert.match(r, /^---\ninclusion: manual\n---\n/);
+  assert.ok(r.includes(instructionHint()));
 });
 
-test('windsurf rule is the plain body', () => {
-  assert.ok(windsurfRule().includes(instructionBody()));
+test('windsurf compatibility rule is manual; the skill handles automatic discovery', () => {
+  const r = windsurfRule();
+  assert.match(r, /^---\ntrigger: manual\n---\n/);
+  assert.ok(r.includes(instructionHint()));
 });

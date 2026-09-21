@@ -1,7 +1,7 @@
 /**
- * Active-layer install for CLI agents that read user-level hooks.json with
- * PostToolUse semantics. Writes the shared hook shim and one PostToolUse
- * entry that runs post-edit + background sync after every file edit.
+ * Lightweight active layer for Codex-style CLI agents. Writes the shared hook
+ * shim plus edit/turn-end freshness hooks; retrieval stays on-demand through
+ * skills/MCP instead of being injected into every session or prompt.
  */
 import { writeFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';

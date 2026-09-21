@@ -171,7 +171,7 @@ function emit(eventName: string, additionalContext: string): void {
  * Returns null when neither shape yields a path, so the hook stays a clean no-op.
  */
 export function editedFilePath(input: any, dir: string): string | null {
-  const direct = input?.tool_input?.file_path;
+  const direct = input?.file_path ?? input?.tool_input?.file_path;
   if (typeof direct === 'string' && direct.trim()) return direct;
   const cmd = input?.tool_input?.command;
   if (typeof cmd === 'string' && cmd) {

@@ -72,9 +72,10 @@ test('the three ~/.codex writes are scoped global', () => {
 test('global writes vanish when the CLI is not installed', () => {
   const agents = planInit(fresh(), { home: fresh(), ids: ['agents'] })[0];
   assert.deepEqual(agents.writes.filter((w) => w.scope === 'global'), []);
-  // AGENTS.md is still planned — the instruction file does not depend on ~.
-  assert.equal(agents.writes.length, 1);
-  assert.match(agents.writes[0].path, /AGENTS\.md$/);
+  // AGENTS.md + the project .agents skill do not depend on a user-level CLI.
+  assert.equal(agents.writes.length, 2);
+  assert.ok(agents.writes.some((w) => /AGENTS\.md$/.test(w.path)));
+  assert.ok(agents.writes.some((w) => /\.agents[\\/]skills[\\/]graft[\\/]SKILL\.md$/.test(w.path)));
 });
 
 test('detected mirrors detectHosts; claude is always available', () => {
@@ -103,6 +104,7 @@ test('every path a real runHostsInit writes was in the plan, and vice versa', ()
     ...r.written.map((w) => w.path),
     ...r.mcp.map((m) => m.path),
     ...r.hooks.map((h) => h.path),
+    ...r.skills.map((sk) => sk.path),
   ]);
 
   assert.deepEqual([...actual].sort(), [...planned].sort());

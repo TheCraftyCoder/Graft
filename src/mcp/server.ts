@@ -100,15 +100,22 @@ export function startMcpServer(root: string, dirOverride?: string, version = '0'
     const { id, method, params } = msg;
     const isNotification = id === undefined;
     switch (method) {
-      case 'initialize':
+      case 'initialize': {
+        // A user-scope MCP registration starts Graft in repos that never opted in.
+        // In those repos advertise no tools AND emit no instructions/upkeep text:
+        // globally installed Graft should cost zero model context outside built repos.
+        const active = advertised(root, dirOverride).length > 0;
+        const instructions = active
+          ? [upkeep.length ? upkeep.join('\n') : '', mcpInstructions()].filter(Boolean).join('\n\n')
+          : '';
         reply(id, {
           protocolVersion: params?.protocolVersion ?? '2024-11-05',
           capabilities: { tools: {} },
           serverInfo: { name: 'graft', version },
-          // The one channel that survives tool deferral — see ./instructions.ts.
-          instructions: upkeep.length ? `${upkeep.join('\n')}\n\n${mcpInstructions()}` : mcpInstructions(),
+          ...(instructions ? { instructions } : {}),
         });
         return;
+      }
       case 'notifications/initialized':
       case 'notifications/cancelled':
         return; // notifications get no response

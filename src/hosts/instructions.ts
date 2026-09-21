@@ -3,6 +3,15 @@
  * native format. Content changes happen HERE only; renderers just wrap it.
  */
 
+/** Minimal always-on pointer. The full workflow lives in the on-demand skill. */
+export function instructionHint(): string {
+  return `## Graft
+
+For structural repository navigation, use the on-demand \`graft\` skill. For
+known files, symbols, literals, RPC ids, types, or stores, use source, \`rg\`,
+or LSP directly. Treat Graft as navigation evidence; verify source before editing.`;
+}
+
 export function instructionBody(): string {
   return `## Graft — structural repo map
 
@@ -29,22 +38,25 @@ authoritative specifications decide correctness.`;
 
 export function cursorRule(): string {
   return `---
-description: Use Graft selectively for structural repository questions
-alwaysApply: true
+description: Compatibility pointer for Graft structural navigation; prefer the on-demand graft skill.
+alwaysApply: false
 ---
-${instructionBody()}
+${instructionHint()}
 `;
 }
 
 export function kiroSteering(): string {
   return `---
-inclusion: always
+inclusion: manual
 ---
-${instructionBody()}
+${instructionHint()}
 `;
 }
 
 export function windsurfRule(): string {
-  return `${instructionBody()}
+  return `---
+trigger: manual
+---
+${instructionHint()}
 `;
 }

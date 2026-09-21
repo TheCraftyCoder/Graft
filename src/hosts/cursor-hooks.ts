@@ -1,7 +1,6 @@
 /**
- * Cursor project hooks (https://cursor.com/docs/hooks) — the adapter that lets
- * Cursor produce the same session usage mix Claude Code does (graft reads vs
- * Read/Grep, plus token savings), which Cursor otherwise has no way to record.
+ * Lightweight Cursor project hooks (https://cursor.com/docs/hooks): edit +
+ * turn-end freshness only. Retrieval stays on-demand through skills/MCP.
  *
  * Unlike the Codex hooks (which live under `~/.codex` and fire in every repo),
  * Cursor project hooks are **repo-local**: `.cursor/hooks.json` + a shim under
