@@ -56,7 +56,7 @@ test('foreign hook entries and a pre-existing version are preserved; stale graft
     hooks: {
       postToolUse: [
         { command: 'other-tool.sh' },
-        { command: 'node /old/graft-hooks.cjs cursor-post-tool' },
+        { command: 'node /old/.cursor/hooks/graft-hooks.cjs cursor-post-tool' },
       ],
     },
   }));

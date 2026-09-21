@@ -6,6 +6,7 @@
 import { statSync, writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { writeAllowed } from './plan.js';
 import { HOSTS, detectHosts, type DetectProbe, type HostTarget } from './registry.js';
 import { upsertSection } from './sections.js';
 import { registerMcpConfigs, type McpWrite } from './mcp-config.js';
@@ -74,24 +75,28 @@ export function runHostsInit(
     written.push({ id: host.id, path, action });
   }
   const skipped = HOSTS.filter((h) => !selected.includes(h)).map((h) => h.id);
+  const flags = { mcp: opts.mcp, hooks: opts.hooks, global: opts.global };
+  // Same predicate planOperations() applies, so dry-run and the real run agree.
+  const ok = (kind: 'mcp' | 'hook' | 'skill', scope: 'repo' | 'global') =>
+    writeAllowed({ hostId: 'x', kind, scope }, flags);
   const mcp =
-    opts.mcp === false
+    !ok('mcp', 'repo')
       ? []
       : registerMcpConfigs(repo, selected.map((h) => h.id), { home, global: opts.global });
   // The Codex hook targets are user-level (~/.codex), so --no-global suppresses them.
   const hooks =
-    opts.hooks === false || opts.global === false || !selected.some((h) => h.id === 'agents')
+    !ok('hook', 'global') || !selected.some((h) => h.id === 'agents')
       ? []
       : installCodexHooks(home);
   // Cursor's hooks are repo-local (.cursor/hooks.json), matching the Cursor-only,
   // no-global posture — so --no-global does NOT suppress them; only --no-hooks does.
   const cursorHooks =
-    opts.hooks === false || !selected.some((h) => h.id === 'cursor')
+    !ok('hook', 'repo') || !selected.some((h) => h.id === 'cursor')
       ? []
       : installCursorHooks(repo);
   // Antigravity's skill is a global write too, so --no-global suppresses it as well.
   const antigravitySkill =
-    opts.global === false || !selected.some((h) => h.id === 'antigravity')
+    !ok('skill', 'global') || !selected.some((h) => h.id === 'antigravity')
       ? []
       : installAntigravitySkill(home);
   return { written, skipped, unknown, mcp, hooks: [...hooks, ...cursorHooks, ...antigravitySkill] };

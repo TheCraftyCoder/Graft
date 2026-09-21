@@ -44,7 +44,7 @@ test('readJsonObject: a top-level array or primitive is unparseable — we only 
 });
 
 test('isGraftEntry matches graft-owned entries and tolerates undefined', () => {
-  assert.ok(isGraftEntry({ command: 'node /x/graft-hooks.cjs post-edit' }));
+  assert.ok(isGraftEntry({ command: 'node /x/.codex/hooks/graft/graft-hooks.cjs post-edit' }));
   assert.ok(!isGraftEntry({ command: 'other-tool.sh' }));
   assert.doesNotThrow(() => isGraftEntry(undefined));
   assert.equal(isGraftEntry(undefined), false);

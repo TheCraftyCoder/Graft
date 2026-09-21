@@ -15,7 +15,7 @@ function probeFor(home: string, repo: string): DetectProbe {
 function fresh(): string { return mkdtempSync(join(tmpdir(), 'graft-registry-')); }
 
 test('registry exposes the known hosts', () => {
-  assert.deepEqual(hostIds().sort(), ['adal', 'agents', 'antigravity', 'copilot', 'cursor', 'gemini', 'grok', 'hermes', 'kiro', 'windsurf']);
+  assert.deepEqual(hostIds().sort(), ['adal', 'agents', 'agents-md', 'antigravity', 'copilot', 'cursor', 'gemini', 'grok', 'hermes', 'kiro', 'windsurf']);
   for (const h of HOSTS) {
     assert.ok(h.relPath.length > 0);
     assert.ok(h.content().length > 0);
@@ -77,4 +77,15 @@ test('~/.hermes or AppData/Local/hermes lights up the hermes host', () => {
   const ids = detectHosts(probeFor(home, repo)).map((h) => h.id).sort();
   assert.deepEqual(ids, ['hermes']);
   assert.ok(HOSTS.find((h) => h.id === 'hermes')?.relPath === 'AGENTS.md');
+});
+
+test('agents-md is instruction-only: never detected, still selectable', () => {
+  const home = fresh(); const repo = fresh();
+  mkdirSync(join(home, '.codex'));
+  mkdirSync(join(home, '.config', 'opencode'), { recursive: true });
+  const host = HOSTS.find((h) => h.id === 'agents-md')!;
+  assert.equal(host.kind, 'section');
+  assert.equal(host.relPath, 'AGENTS.md');
+  assert.equal(host.detect(probeFor(home, repo)), false);
+  assert.ok(!detectHosts(probeFor(home, repo)).some((h) => h.id === 'agents-md'));
 });

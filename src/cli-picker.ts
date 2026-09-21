@@ -6,6 +6,7 @@
  */
 import { relative, dirname, sep } from 'node:path';
 import type { HostPlan, PlannedWrite } from './hosts/plan.js';
+import type { Retraction } from './hosts/retract.js';
 
 const indigo = (s: string) => `\x1b[38;2;84;111;255m${s}\x1b[0m`;
 const muted = (s: string) => `\x1b[38;5;244m${s}\x1b[0m`;
@@ -353,11 +354,16 @@ export function formatPlan(
   repo: string,
   home: string,
   tty = Boolean(process.stderr.isTTY),
+  /** Flag-filtered writes + retractions from planOperations(); when given, the
+   *  plan is rendered from these so the output matches the real run exactly. */
+  ops?: { writes: PlannedWrite[]; retractions: Retraction[]; preserve?: boolean },
 ): string {
   const dim = tty ? muted : (s: string) => s;
   const warn = tty ? amber : (s: string) => s;
-  const writes = plan.filter((p) => ids.includes(p.id)).flatMap((p) => p.writes);
-  if (writes.length === 0) return 'would write — nothing (no agents selected)';
+  const writes = ops ? ops.writes : plan.filter((p) => ids.includes(p.id)).flatMap((p) => p.writes);
+  const retractions = ops?.retractions ?? [];
+  if (writes.length === 0 && retractions.length === 0 && !ops?.preserve)
+    return 'would write — nothing (no agents selected)';
 
   const pad = (rows: PlannedWrite[], f: (p: string) => string) => {
     const w = Math.max(...rows.map((r) => f(r.path).length));
@@ -378,6 +384,22 @@ export function formatPlan(
       '',
       dim('suppress the out-of-repo writes with --no-global'),
     );
+  }
+  if (writes.length === 0) lines.push('would write — nothing');
+  if (retractions.length > 0) {
+    if (lines.length) lines.push('');
+    const rows = retractions.map((r) => [r.scope === 'global' ? tilde(r.path, home) : relative(repo, r.path), r.what, r.action]);
+    const w = Math.max(...rows.map((r) => r[0].length));
+    lines.push(
+      warn('would remove / edit (retract) — graft wiring of agents not selected:'),
+      ...rows.map(([p, what, action]) => `  ${p.padEnd(w)}  ${dim(`${what} [${action}]`)}`),
+      '',
+      dim('keep them with --preserve-unselected'),
+    );
+  }
+  if (ops?.preserve) {
+    if (lines.length) lines.push('');
+    lines.push('preserve-unselected: no unselected host will be created, updated or removed');
   }
   lines.push('', dim('nothing was written (--dry-run)'));
   return lines.join('\n');

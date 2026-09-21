@@ -135,9 +135,9 @@ test('global install removes legacy Graft hooks but preserves foreign hooks', ()
   mkdirSync(join(home, '.claude'), { recursive: true });
   writeFileSync(settingsOf(home), JSON.stringify({
     hooks: {
-      SessionStart: [{ hooks: [{ type: 'command', command: 'node "/old/graft-hooks.cjs" session-start' }] }],
+      SessionStart: [{ hooks: [{ type: 'command', command: 'node "/old/.claude/helpers/graft-hooks.cjs" session-start' }] }],
       PostToolUse: [
-        { hooks: [{ type: 'command', command: 'node "/old/graft-hooks.cjs" post-edit' }] },
+        { hooks: [{ type: 'command', command: 'node "/old/.claude/helpers/graft-hooks.cjs" post-edit' }] },
         { hooks: [{ type: 'command', command: 'mine.sh' }] },
       ],
     },

@@ -209,9 +209,12 @@ export interface WiringOpts {
   hooks: boolean;
   /** false → skip Claude Code statusLine (`--no-statusline` / GRAFT_NO_STATUSLINE). */
   statusline: boolean;
+  /** true → `--preserve-unselected`: a refresh rewrites only the stamped hosts
+   * (never adopts hosts merely found on disk), so it cannot touch other wiring. */
+  preserve: boolean;
 }
 
-export const DEFAULT_WIRING_OPTS: WiringOpts = { global: true, mcp: true, hooks: true, statusline: true };
+export const DEFAULT_WIRING_OPTS: WiringOpts = { global: true, mcp: true, hooks: true, statusline: true, preserve: false };
 
 /** An older stamp has no `opts`; a plain `graft init` wired everything. */
 export function wiringOpts(stamp: WiringStamp | null): WiringOpts {
@@ -266,6 +269,8 @@ export function wiredHostIds(repo: string): string[] {
   const ids: string[] = [];
   if (existsSync(join(repo, '.claude', 'helpers', 'graft-hooks.cjs'))) ids.push('claude');
   for (const host of HOSTS) {
+    // Instruction-only alias of `agents`' AGENTS.md write; never adopted from disk.
+    if (host.id === 'agents-md') continue;
     const path = join(repo, host.relPath);
     if (!existsSync(path)) continue;
     // A shared file (AGENTS.md, GEMINI.md) counts only if graft's fenced section
@@ -312,9 +317,14 @@ export function reconcileWiring(
     // merge, or clobbered by another tool — is silently dropped from every future
     // refresh, and that file is precisely what a refresh exists to restore.
     const onDisk = (deps.wired ?? wiredHostIds)(repo);
-    const hosts = [...new Set([...(stamp?.hosts ?? []), ...onDisk])].sort();
-    if (hosts.length === 0) return null; // never wired here — not our business
     const opts = wiringOpts(stamp);
+    // A preserve-unselected init recorded exactly which hosts it owns; adopting
+    // disk-only hosts would rewrite wiring the user asked us to leave alone.
+    const hosts = (opts.preserve && stamp
+      ? [...stamp.hosts]
+      : [...new Set([...(stamp?.hosts ?? []), ...onDisk])]
+    ).sort();
+    if (hosts.length === 0) return null; // never wired here — not our business
     deps.rewrite(repo, hosts, opts);
     writeStamp(repo, current, hosts, opts);
     return { from: stamp?.version ?? 'unwired', to: current, hosts, global: opts.global };

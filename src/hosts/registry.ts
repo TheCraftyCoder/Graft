@@ -39,6 +39,18 @@ export const HOSTS: HostTarget[] = [
       p.dirExists(join(p.home, '.config', 'agents')),
   },
   {
+    // Instruction-only: the fenced AGENTS.md section and nothing else. Unlike
+    // `agents` it has no MCP target, no Codex hooks, and no OpenCode/global write
+    // (those key on the id 'agents'), so it is safe for a targeted, no-side-effect
+    // init. Never auto-detected or pre-checked; select it explicitly.
+    id: 'agents-md',
+    name: 'AGENTS.md instruction section only',
+    kind: 'section',
+    relPath: 'AGENTS.md',
+    content: instructionBody,
+    detect: () => false,
+  },
+  {
     id: 'adal',
     name: 'AdaL',
     kind: 'owned',

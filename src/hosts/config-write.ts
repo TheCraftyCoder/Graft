@@ -35,12 +35,52 @@ export function writeOwned(id: string, path: string, content: string, mode?: num
   return { id, path, action: existed ? 'updated' : 'created' };
 }
 
+/** Path tails of every shim location any Graft version has written. */
+const GRAFT_SHIM_SUFFIXES = [
+  '/.claude/helpers/graft-hooks.cjs', // repo + legacy user-level Claude
+  '/.codex/hooks/graft/graft-hooks.cjs', // Codex
+  '/.cursor/hooks/graft-hooks.cjs', // Cursor (repo)
+];
+
+/** Split a shell command into words, honouring single/double quotes. */
+function shellWords(cmd: string): string[] {
+  const words: string[] = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(cmd)) !== null) words.push(m[1] ?? m[2] ?? m[3]);
+  return words;
+}
+
+/** True when the command runs `node <graft shim> ...` (the script argument, not a mention). */
+function commandRunsGraftShim(cmd: unknown): boolean {
+  if (typeof cmd !== 'string') return false;
+  const words = shellWords(cmd);
+  let i = 0;
+  while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) i++; // env assignments
+  const exe = words[i]?.replaceAll('\\', '/').split('/').pop()?.toLowerCase();
+  if (exe !== 'node' && exe !== 'node.exe') return false;
+  i++;
+  while (i < words.length && words[i].startsWith('-')) i++; // node flags
+  const script = words[i]?.replaceAll('\\', '/');
+  return !!script && GRAFT_SHIM_SUFFIXES.some((suf) => script.endsWith(suf) || script === suf.slice(1));
+}
+
 /** Whether a hooks-config entry is one graft installed (so an upgrade replaces
- *  it in place instead of stacking a second copy next to the stale one). The
- *  `?? ''` guards a stray `undefined` entry: `JSON.stringify(undefined)` is
- *  `undefined`, whose `.includes` would throw. */
+ *  it in place instead of stacking a second copy next to the stale one). Only a
+ *  hook command that executes one of Graft's shim paths counts; a foreign hook
+ *  that merely mentions the filename is never Graft-owned. Never throws. */
 export function isGraftEntry(entry: unknown): boolean {
-  return JSON.stringify(entry ?? '').includes('graft-hooks.cjs');
+  try {
+    if (typeof entry !== 'object' || entry === null) return false;
+    const e = entry as Record<string, unknown>;
+    if (commandRunsGraftShim(e.command)) return true;
+    if (Array.isArray(e.hooks)) {
+      return e.hooks.some((h) => typeof h === 'object' && h !== null && commandRunsGraftShim((h as Record<string, unknown>).command));
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 /**

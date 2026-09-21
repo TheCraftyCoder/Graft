@@ -40,18 +40,17 @@ export function toolSearchQuery(prefix = 'mcp__graft__'): string {
 
 export function mcpInstructions(): string {
   return [
-    'This repo is indexed by graft: a prebuilt graph of every symbol, its file:line',
-    'span, and who calls what. Prefer these tools over grep/read — one call usually',
-    'replaces several file reads.',
+    'Graft is a structural repository map. Use it selectively: unfamiliar architecture, exhaustive indexed search, callers/blast radius, a file\'s compact API, repo orientation.',
+    'For a known file, symbol, literal, RPC id, type, or store, go straight to source, rg, or LSP.',
     '',
-    `**If these tools are deferred (names shown, schemas withheld), load them all in ONE lookup:** ToolSearch "${toolSearchQuery()}" — one round trip for the whole session. Never load them one at a time.`,
+    `**If these tools are deferred (schemas withheld), load them all in ONE lookup:** ToolSearch "${toolSearchQuery()}" — one round trip, never one at a time.`,
     '',
-    '- graft_find_code — "how does X work" / "where is Y": ranked hits, code inlined.',
-    '- graft_find_all — when you need EVERY occurrence; find_code is top-N and misses some.',
-    '- graft_trace_calls — who calls it, what it calls, blast radius before a rename.',
-    '- graft_file_api — a file\'s whole API in ~200 tokens.',
+    '- graft_find_code — unfamiliar "how does X work": ranked hits.',
+    '- graft_find_all — every indexed occurrence; find_code is top-N.',
+    '- graft_trace_calls — callers, callees, blast radius.',
+    '- graft_file_api — signatures and spans for one file.',
     '- graft_repo_map — orientation in an unfamiliar repo.',
     '',
-    'Results already reflect uncommitted edits — the graph refreshes before each query.',
+    'Graft is navigation evidence, not authoritative truth: read source before editing. Results reflect current edits (the graph refreshes before each query).',
   ].join('\n');
 }

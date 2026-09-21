@@ -34,6 +34,7 @@ import { antigravitySkillTargets } from './antigravity.js';
 import { claudeGlobalTargets, globalHelpersDir } from './claude-global.js';
 import { claudeTargets } from '../claude/init.js';
 import { isGraftAllowEntry, isGraftFooterRegex } from '../claude/settings-merge.js';
+import { isGraftEntry } from './config-write.js';
 import type { WriteScope } from './plan.js';
 
 /** What a retraction did to one target. */
@@ -239,7 +240,7 @@ function stripClaudeSettings(path: string, apply: boolean): RetractAction {
     for (const event of Object.keys(root.hooks)) {
       const prior = root.hooks[event];
       if (!Array.isArray(prior)) continue;
-      const kept = prior.filter((e: unknown) => !JSON.stringify(e ?? '').includes('graft-hooks.cjs'));
+      const kept = prior.filter((e: unknown) => !isGraftEntry(e));
       if (kept.length === 0) delete root.hooks[event];
       else root.hooks[event] = kept;
     }
@@ -282,7 +283,7 @@ function stripCodexHooks(path: string, apply: boolean): RetractAction {
   for (const event of Object.keys(root.hooks)) {
     const prior = root.hooks[event];
     if (!Array.isArray(prior)) continue;
-    const kept = prior.filter((e: unknown) => !JSON.stringify(e ?? '').includes('graft-hooks.cjs'));
+    const kept = prior.filter((e: unknown) => !isGraftEntry(e));
     if (kept.length === 0) delete root.hooks[event];
     else root.hooks[event] = kept;
   }
