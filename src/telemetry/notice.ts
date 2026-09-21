@@ -17,7 +17,6 @@ import { patchState, readState } from './identity.js';
 import { explainOff, offReason } from './gate.js';
 import { peek } from './queue.js';
 import { buildBatch } from './send.js';
-import { posthogHost } from './key.js';
 
 export const TELEMETRY_DOC_URL = 'https://github.com/NanoNets/context-graph-engine/blob/main/TELEMETRY.md';
 
@@ -45,25 +44,13 @@ export function firstRunNotice(home?: string, env?: NodeJS.ProcessEnv): string |
 /** `graft telemetry status`. `env` is a test seam, as elsewhere in this module —
  *  a real run must be gated on the real `DO_NOT_TRACK` and CI variables. */
 export function formatStatus(home?: string, env?: NodeJS.ProcessEnv): string {
-  const reason = offReason(home, env);
-  const pending = peek(home).length;
-  const lines = [
-    reason === null
-      ? 'telemetry: on — anonymous, aggregate-only'
-      : `telemetry: ${explainOff(reason)}`,
+  void home; void env;
+  return [
+    'telemetry: off — permanently disabled in this build',
+    '  no usage metrics are recorded or sent',
     `  contract:  ${TELEMETRY_DOC_URL}`,
-  ];
-  if (reason === null || reason === 'disabled') {
-    lines.push(`  endpoint:  ${posthogHost()}`);
-    lines.push(`  queued:    ${pending} event${pending === 1 ? '' : 's'} waiting for the next daily flush`);
-  }
-  lines.push(
-    reason === 'disabled'
-      ? '  enable:    graft telemetry enable'
-      : '  disable:   graft telemetry disable  (or set DO_NOT_TRACK=1)',
-  );
-  lines.push('  inspect:   graft telemetry debug   (prints the exact batch, sends nothing)');
-  return lines.join('\n');
+    '  inspect:   graft telemetry debug   (shows only any legacy local queue; nothing can be sent)',
+  ].join('\n');
 }
 
 /**
@@ -77,7 +64,7 @@ export function formatDebug(home?: string): string {
   if (events.length === 0) {
     return [
       'telemetry: nothing queued.',
-      '  Run a graft command first — events are written locally and flushed once a day.',
+      '  Telemetry is disabled in this build; no new usage events are recorded.',
     ].join('\n');
   }
   // A literal placeholder, never the key itself. This output is written to be
@@ -85,8 +72,8 @@ export function formatDebug(home?: string): string {
   // needed to audit what graft sends.
   const body = { api_key: '<omitted — graft\'s own ingestion key>', ...buildBatch(events) };
   return [
-    `telemetry: ${events.length} event(s) queued. This is the exact body a flush would POST`,
-    `to ${posthogHost()}/batch/ — running this command sends nothing.`,
+    `telemetry: ${events.length} legacy queued event(s) remain on disk.`,
+    'This build cannot send them; the JSON below is shown only for inspection.',
     '',
     JSON.stringify(body, null, 2),
   ].join('\n');

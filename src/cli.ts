@@ -285,8 +285,8 @@ program
         console.log(formatStatus());
         return;
       case "enable":
-        patchState({ enabled: true });
-        console.log("telemetry: on — anonymous, aggregate-only. `graft telemetry status` for details.");
+        patchState({ enabled: false, noticeShownAt: new Date().toISOString() });
+        console.log("telemetry: off — permanently disabled in this build; enable is unavailable.");
         return;
       case "disable":
         // Also stamp the notice as shown: someone who has just opted out should
