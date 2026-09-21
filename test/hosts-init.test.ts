@@ -19,7 +19,7 @@ test('writes only detected hosts by default', () => {
   const r = runHostsInit(repo, { home });
   assert.deepEqual(r.written.map((w) => w.id), ['cursor']);
   const mdc = readFileSync(join(repo, '.cursor', 'rules', 'graft.mdc'), 'utf8');
-  assert.match(mdc, /alwaysApply: true/);
+  assert.match(mdc, /alwaysApply: false/);
   assert.ok(!existsSync(join(repo, 'AGENTS.md')));
 });
 
@@ -59,7 +59,7 @@ test('CLI: graft init --agents gemini writes GEMINI.md and exits 0', () => {
   execFileSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'init', repo, '--no-build', '--agents', 'gemini'], {
     encoding: 'utf8',
   });
-  assert.ok(readFileSync(join(repo, 'GEMINI.md'), 'utf8').includes('graft ask'));
+  assert.ok(readFileSync(join(repo, 'GEMINI.md'), 'utf8').includes('on-demand `graft` skill'));
 });
 
 test('CLI: unknown agent id exits non-zero', () => {
