@@ -36,12 +36,11 @@ test('planInit writes nothing — it only describes', () => {
 });
 
 /**
- * The claude layer used to be entirely repo-scoped. It no longer is, deliberately:
- * a repo-only install is invisible to a `git worktree add` of a repo whose
- * `.gitignore` covers `.mcp.json` / `.claude/settings.json`, and the user-level copy
- * is the only place a `.gitignore` cannot reach. See src/hosts/claude-global.ts.
+ * Claude keeps a user-scope MCP fallback outside the repo so .gitignore and
+ * worktrees cannot make the server disappear. The global settings target is
+ * migration-only and removes legacy Graft hooks without adding new ones.
  */
-test('claude writes: five in the repo, three in ~ that no .gitignore can eat', () => {
+test('claude writes: five in the repo, plus global settings cleanup and MCP fallback', () => {
   const home = fullHome();
   const repo = fresh();
   const claude = planInit(repo, { home, ids: ['claude'] })[0];
@@ -53,7 +52,7 @@ test('claude writes: five in the repo, three in ~ that no .gitignore can eat', (
   const globals = claude.writes.filter((w) => w.scope === 'global');
   assert.deepEqual(
     globals.map((w) => toPosixPath(w.path.slice(home.length))).sort(),
-    ['/.claude.json', '/.claude/helpers/graft-hooks.cjs', '/.claude/settings.json'],
+    ['/.claude.json', '/.claude/settings.json'],
   );
   assert.ok(globals.every((w) => !w.path.startsWith(repo)), 'nothing global lands in the repo');
 });

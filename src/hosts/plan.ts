@@ -71,9 +71,9 @@ export function planInit(repo: string, opts: { home?: string; ids?: string[] } =
   const detected = new Set(detectHosts(probe).map((h) => h.id));
 
   const plans: HostPlan[] = [
-    // Repo writes plus the user-level copy under `~/.claude` — the picker and
-    // `--dry-run` render 'global' writes in their own section, so a user sees
-    // what lands outside the repo before agreeing to it.
+    // Repo writes plus the user-level MCP fallback/settings cleanup — the picker and
+    // `--dry-run` render global writes separately so the user sees what lands
+    // outside the repo before agreeing to it.
     { id: 'claude', name: 'Claude Code', detected: true, writes: [...claudeTargets(repo), ...claudeGlobalTargets(home)] },
     ...HOSTS.map((host) => ({
       id: host.id,
