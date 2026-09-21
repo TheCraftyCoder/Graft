@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { underGraft, main, lastFileScopeHint, promptAskTimeout } from '../src/claude/hooks.js';
 import { readStats, readSession } from '../src/claude/state.js';
-import { runSync } from '../src/claude/sync-run.js';
+import { runSync, SYNC_BUILD_TIMEOUT_MS } from '../src/claude/sync-run.js';
 import { writeStats, emptyStats, acquireLock, resolveContextDir } from '../src/claude/state.js';
 
 test('underGraft detects edits inside graft/', () => {
@@ -98,6 +98,10 @@ test('post-edit-sync on a file under graft/ does not mark dirty', async () => {
   // dir so there is no prior state to inherit — stats are either absent or dirty: false.
   const s = readStats(d);
   assert.equal(s === null || s.dirty === false, true, 'dirty not newly set by this call');
+});
+
+test('background sync build timeout allows large repositories to finish', () => {
+  assert.equal(SYNC_BUILD_TIMEOUT_MS, 10 * 60 * 1000);
 });
 
 test('runSync clears dirty/syncing, recomputes stats, releases lock', () => {

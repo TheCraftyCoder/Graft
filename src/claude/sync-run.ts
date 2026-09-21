@@ -4,6 +4,8 @@ import { readWiring, computeStats } from './stats.js';
 import { patchStats, releaseLock, resolveContextDir } from './state.js';
 import { graftCliPath } from './paths.js';
 
+export const SYNC_BUILD_TIMEOUT_MS = 10 * 60 * 1000;
+
 /** MONEY GUARD: plain `graft build` only — structural, $0, offline. Never --deep. */
 function realBuild(dir: string): void {
   // GRAFT_TEST_CLI is the same seam hooks.ts's graftJson uses, so a test can
@@ -13,7 +15,12 @@ function realBuild(dir: string): void {
   // Mirrors `withContextDirArg` in hooks.ts: a no-op unless GRAFT_DIR is set, so an
   // unconfigured repo's rebuild sees byte-identical argv to before this existed.
   if (process.env.GRAFT_DIR) args.push('--dir', resolveContextDir(dir));
-  execFileSync(process.execPath, args, { cwd: dir, stdio: 'ignore', timeout: 120000, windowsHide: true });
+  execFileSync(process.execPath, args, {
+    cwd: dir,
+    stdio: 'ignore',
+    timeout: SYNC_BUILD_TIMEOUT_MS,
+    windowsHide: true,
+  });
 }
 
 export function runSync(dir: string, build: (d: string) => void = realBuild): void {
