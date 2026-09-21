@@ -30,6 +30,20 @@ const parseSpan = (s: string): [number, number] | null => {
   return m ? [Number(m[1]), Number(m[2])] : null;
 };
 
+export function readinessSample<T extends { path: string }>(items: T[]): T[] {
+  if (!items.length) return [];
+  const sample: T[] = [];
+  const seen = new Set<string>();
+  for (const fraction of [0, 0.25, 0.5, 0.75, 0.999]) {
+    const candidate = items[Math.floor(fraction * (items.length - 1))];
+    if (candidate && !seen.has(candidate.path)) {
+      seen.add(candidate.path);
+      sample.push(candidate);
+    }
+  }
+  return sample;
+}
+
 export interface LspEnrichResult { added: number; queried: number; servers: string[] }
 
 export async function enrichWithLsp(
@@ -103,10 +117,30 @@ export async function enrichWithLsp(
     try {
       if (!(await client.initialize())) continue;
 
-      // Warm up only on a document this server handles. A failed server must
-      // not prevent the other languages from being enriched.
-      const warm = serverSources.find((s) => namePos(s));
-      if (warm && !(await client.waitUntilReady(join(root, warm.path), namePos(warm)!))) continue;
+      // A single easy file can answer while the server is still indexing the
+      // workspace. Probe a spread of files before starting the full pass.
+      const withPos = serverSources.filter((s) => namePos(s));
+      const sample = readinessSample(withPos);
+      if (sample.length) {
+        const first = sample[0];
+        if (!(await client.waitUntilReady(join(root, first.path), namePos(first)!))) continue;
+
+        for (let attempt = 0; attempt < 60; attempt++) {
+          let ready = true;
+          for (const source of sample) {
+            const pos = namePos(source);
+            if (!pos) continue;
+            const abs = join(root, source.path);
+            client.didOpen(abs);
+            if (!(await client.prepareCallHierarchy(abs, pos)).length) {
+              ready = false;
+              break;
+            }
+          }
+          if (ready) break;
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      }
 
       for (const src of serverSources) {
         const abs = join(root, src.path);

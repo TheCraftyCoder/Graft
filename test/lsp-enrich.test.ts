@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { pickServers, LSP_SERVERS, parseTypeScriptMajor } from "../src/graph/lsp/registry.js";
-import { enrichWithLsp } from "../src/graph/lsp/enrich.js";
+import { enrichWithLsp, readinessSample } from "../src/graph/lsp/enrich.js";
 import type { GraphV1 } from "../src/graph/types.js";
 
 test("pickServers: no languages present → no servers", () => {
@@ -48,4 +48,19 @@ test("parseTypeScriptMajor recognizes classic and native TypeScript versions", (
   assert.equal(parseTypeScriptMajor("Version 7.0.2"), 7);
   assert.equal(parseTypeScriptMajor("6.0.3"), 6);
   assert.equal(parseTypeScriptMajor("not-a-version"), null);
+});
+
+
+test("readinessSample spreads probes across files and deduplicates paths", () => {
+  const items = Array.from({ length: 20 }, (_, i) => ({ path: `src/file-${i}.ts`, i }));
+  assert.deepEqual(readinessSample(items).map((item) => item.i), [0, 4, 9, 14, 18]);
+
+  const repeated = [
+    { path: "a.ts", i: 0 },
+    { path: "a.ts", i: 1 },
+    { path: "b.ts", i: 2 },
+    { path: "b.ts", i: 3 },
+    { path: "c.ts", i: 4 },
+  ];
+  assert.deepEqual(readinessSample(repeated).map((item) => item.path), ["a.ts", "b.ts"]);
 });
