@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pickServers, LSP_SERVERS } from "../src/graph/lsp/registry.js";
+import { pickServers, LSP_SERVERS, parseTypeScriptMajor } from "../src/graph/lsp/registry.js";
 import { enrichWithLsp } from "../src/graph/lsp/enrich.js";
 import type { GraphV1 } from "../src/graph/types.js";
 
@@ -41,4 +41,11 @@ test("enrichWithLsp is a no-op when no server matches the repo's languages", asy
   assert.deepEqual(r.servers, [], "no server selected for an unsupported language");
   assert.equal(r.added, 0);
   assert.equal(graph.edges.length, before, "graph edges untouched");
+});
+
+
+test("parseTypeScriptMajor recognizes classic and native TypeScript versions", () => {
+  assert.equal(parseTypeScriptMajor("Version 7.0.2"), 7);
+  assert.equal(parseTypeScriptMajor("6.0.3"), 6);
+  assert.equal(parseTypeScriptMajor("not-a-version"), null);
 });
