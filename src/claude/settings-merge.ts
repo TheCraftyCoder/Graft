@@ -20,6 +20,7 @@ const ALLOW_ENTRIES = [
 
 /** Where the repo-level install's shims sit, relative to whatever project is open. */
 const REPO_HELPERS = '${CLAUDE_PROJECT_DIR:-.}/.claude/helpers';
+const GRAFT_HOOK_EVENTS = ['PostToolUse', 'UserPromptSubmit', 'SessionStart', 'Stop'] as const;
 
 /**
  * `helpers` is the directory holding `graft-hooks.cjs`, and it is a parameter for
@@ -35,28 +36,11 @@ function graftBlocks(helpers?: string): Record<string, Json[]> {
   return {
     PostToolUse: [
       { matcher: 'Write|Edit|MultiEdit', hooks: [{ type: 'command', command: hookCmd('post-edit', helpers), timeout: 10000 }] },
-      // Score the usage mix and sum token savings. A graft retrieval (CLI `graft …`
-      // via Bash, or the `graft_*` MCP tools) prints a `[graft] tokens saved ≈ N`
-      // footer this hook sums into the session total; the same hook classifies
-      // Read/Grep/Glob as source reads vs graft as graft reads, which is what feeds
-      // `graft stats` and the `session_summary` graft-vs-grep ratio. Broad matcher,
-      // but the handler no-ops instantly unless there is something to record, so an
-      // unrelated Bash or a plain Read costs only a stdin read.
-      { matcher: 'Bash|mcp__graft__|Read|Grep|Glob', hooks: [{ type: 'command', command: hookCmd('tool-savings', helpers), timeout: 8000 }] },
     ],
-    // Longer budget than the other hooks: its `graft ask` is a real query, and a
-    // query now brings the graph up to date first (graph/refresh.ts) — usually
-    // milliseconds, but the first one after an upgrade re-parses the repo once.
-    // `hooks.ts` reads this number back out of the installed settings.json at
-    // runtime and caps its `graft ask` child just under it, so a repo wired before
-    // this bump (8s) keeps a child that fits inside 8s. Changing the number here is
-    // therefore safe on its own — but it only reaches an existing repo when someone
-    // re-runs `graft init`, since that is the only caller of this function.
-    UserPromptSubmit: [{ hooks: [{ type: 'command', command: hookCmd('prompt', helpers), timeout: 15000 }] }],
-    SessionStart: [{ hooks: [{ type: 'command', command: hookCmd('session-start', helpers), timeout: 8000 }] }],
     Stop: [{ hooks: [{ type: 'command', command: hookCmd('stop', helpers), timeout: 8000 }] }],
   };
 }
+
 /**
  * Is this allowlist entry one graft wrote?
  *
@@ -129,11 +113,15 @@ export function mergeGraftSettings(
   );
 
   merged.hooks = { ...(merged.hooks ?? {}) };
-  for (const [event, blocks] of Object.entries(graftBlocks())) {
+  const blocks = graftBlocks();
+  for (const event of GRAFT_HOOK_EVENTS) {
     const prior = Array.isArray(merged.hooks[event]) ? merged.hooks[event] : [];
-    const foreign = prior.filter((e: Json) => !isGraftEntry(e)); // drop old Graft entries → idempotent
-    merged.hooks[event] = [...foreign, ...blocks];
+    const foreign = prior.filter((e: Json) => !isGraftEntry(e));
+    const next = [...foreign, ...(blocks[event] ?? [])];
+    if (next.length) merged.hooks[event] = next;
+    else delete merged.hooks[event];
   }
+  if (Object.keys(merged.hooks).length === 0) delete merged.hooks;
 
   // Drop graft's own prior regex before re-adding, so a change to FOOTER replaces
   // the old pattern instead of stacking beside it. The user's regexes are kept.
@@ -153,27 +141,19 @@ export function mergeGraftSettings(
 }
 
 /**
- * The hook blocks alone, merged into a settings file, with the shims addressed by
- * absolute path — `~/.claude/settings.json`, where a write reaches every project on
- * the machine (see hosts/claude-global.ts for why that copy has to exist).
- *
- * Hooks only, deliberately. `mergeGraftSettings` also claims the statusline, the
- * footer regex and a Bash allowlist, and each of those is a reasonable thing to
- * accept for a repo you ran `graft init` in and an unreasonable thing to impose on
- * every repo you ever open — a statusline especially, since a session allows exactly
- * one and taking it globally would silently outrank the user's own. The hooks are the
- * piece that has to be global, because they are what a worktree loses.
- *
- * Same idempotent shape as the repo merge: graft's prior entries are dropped before
- * the current set is added, so re-running converges instead of stacking.
+ * Remove Graft-owned user-level hooks while preserving every foreign hook.
+ * Project-level post-edit + Stop hooks are sufficient; the user-scope MCP
+ * registration remains the worktree fallback without injecting hooks globally.
  */
-export function mergeGraftHooks(existing: Json, helpers: string): { merged: Json } {
+export function mergeGraftHooks(existing: Json, _helpers: string): { merged: Json } {
   const merged: Json = { ...(existing ?? {}) };
   merged.hooks = { ...(merged.hooks ?? {}) };
-  for (const [event, blocks] of Object.entries(graftBlocks(helpers))) {
+  for (const event of GRAFT_HOOK_EVENTS) {
     const prior = Array.isArray(merged.hooks[event]) ? merged.hooks[event] : [];
     const foreign = prior.filter((e: Json) => !isGraftEntry(e));
-    merged.hooks[event] = [...foreign, ...blocks];
+    if (foreign.length) merged.hooks[event] = foreign;
+    else delete merged.hooks[event];
   }
+  if (Object.keys(merged.hooks).length === 0) delete merged.hooks;
   return { merged };
 }

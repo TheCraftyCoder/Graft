@@ -31,7 +31,7 @@ import { ALL_MARKERS, type Markers } from './sections.js';
 import { mcpTargets, stripTomlSection } from './mcp-config.js';
 import { hookTargets } from './codex-hooks.js';
 import { antigravitySkillTargets } from './antigravity.js';
-import { claudeGlobalTargets } from './claude-global.js';
+import { claudeGlobalTargets, globalHelpersDir } from './claude-global.js';
 import { claudeTargets } from '../claude/init.js';
 import { isGraftAllowEntry, isGraftFooterRegex } from '../claude/settings-merge.js';
 import type { WriteScope } from './plan.js';
@@ -432,13 +432,14 @@ function targets(repo: string, opts: RetractOpts): Target[] {
     ] as Target[]) add(t);
   }
 
-  // 4. Global: Claude Code's user-level copy, Codex's hook shim + entries, and
-  //    Antigravity's shared skill.
+  // 4. Global: Claude Code's MCP/settings cleanup (plus legacy shim removal),
+  //    Codex's hook shim + entries, and Antigravity's shared skill.
   if (opts.global !== false) {
     if (!exclude.has('claude')) {
-      const [shim, settings, mcp] = claudeGlobalTargets(home);
+      const [settings, mcp] = claudeGlobalTargets(home);
+      const legacyShim = join(globalHelpersDir(home), 'graft-hooks.cjs');
       for (const t of [
-        { hostId: 'claude', path: shim.path, what: shim.what, scope: 'global', run: (a) => removeFile(shim.path, a) },
+        { hostId: 'claude', path: legacyShim, what: 'legacy hooks shim', scope: 'global', run: (a) => removeFile(legacyShim, a) },
         { hostId: 'claude', path: settings.path, what: settings.what, scope: 'global', run: (a) => stripClaudeSettings(settings.path, a) },
         { hostId: 'claude', path: mcp.path, what: mcp.what, scope: 'global', run: (a) => removeJsonKey(mcp.path, 'mcpServers', a) },
       ] as Target[]) add(t);
