@@ -3,7 +3,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { join, basename, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { readWiring } from './stats.js';
-import { formatBlastRadius, relevantRetrieval, formatOrientation } from './format.js';
+import { relevantRetrieval, formatOrientation } from './format.js';
 import { indexFreshness, staleBanner } from '../context/check.js';
 import { patchStats, readStats, acquireLock, readSession, writeSession, resolveContextDir } from './state.js';
 import { graftCliPath, claudeScriptPath } from './paths.js';
@@ -149,11 +149,6 @@ function graftJson(dir: string, args: string[], timeout: number = CHILD_TIMEOUT_
     return null;
   }
 }
-function checkStaleCount(dir: string): number {
-  const r = graftJson(dir, withContextDirArg(dir, ['check', '.', '--json']));
-  const g = r?.graph ?? {};
-  return (g.changed?.length ?? 0) + (g.added?.length ?? 0) + (g.removed?.length ?? 0);
-}
 function emit(eventName: string, additionalContext: string): void {
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: eventName, additionalContext } }));
 }
@@ -184,9 +179,12 @@ export function editedFilePath(input: any, dir: string): string | null {
 async function handlePostEdit(input: any, dir: string): Promise<void> {
   const file = editedFilePath(input, dir);
   if (!file || underGraft(dir, file)) return;
-  patchStats(dir, { dirty: true, staleCount: checkStaleCount(dir), lastFile: basename(file) });
-  const w = readWiring(dir);
-  if (w) { const br = formatBlastRadius(w, file); if (br) emit('PostToolUse', br); }
+  // Keep edit hooks deterministic and context-free. A previous version ran
+  // `graft check` and injected a blast-radius packet after every edit, which
+  // added process latency and model context even when the task did not need
+  // structural analysis. Dirty + lastFile is enough: Stop performs one sync and
+  // every Graft query independently refreshes before answering.
+  patchStats(dir, { dirty: true, lastFile: basename(file) });
 }
 
 /**

@@ -26,6 +26,31 @@ test('post-edit marks dirty and records lastFile', async () => {
   const s = readStats(d)!;
   assert.equal(s.dirty, true);
   assert.equal(s.lastFile, 'auth.ts');
+  assert.equal(s.staleCount, 0, 'edit hook does not run a full drift check');
+});
+
+test('post-edit is context-free and does not invoke the Graft CLI', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'graft-hooks-light-'));
+  process.env.CLAUDE_PROJECT_DIR = d;
+  const marker = join(d, 'cli-ran.txt');
+  const stub = join(d, 'cli-stub.cjs');
+  writeFileSync(stub, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran');\n`);
+  process.env.GRAFT_TEST_CLI = stub;
+  const chunks: string[] = [];
+  const orig = process.stdout.write.bind(process.stdout);
+  (process.stdout as any).write = (x: any) => { chunks.push(String(x)); return true; };
+  try {
+    await runWithStdin(
+      JSON.stringify({ tool_input: { file_path: join(d, 'src', 'a.ts') } }),
+      () => main('post-edit'),
+    );
+  } finally {
+    (process.stdout as any).write = orig;
+    delete process.env.GRAFT_TEST_CLI;
+    delete process.env.CLAUDE_PROJECT_DIR;
+  }
+  assert.equal(existsSync(marker), false, 'no graft check/query child process');
+  assert.equal(chunks.join(''), '', 'no blast-radius context injected after edits');
 });
 
 test('post-edit ignores edits inside graft/', async () => {
