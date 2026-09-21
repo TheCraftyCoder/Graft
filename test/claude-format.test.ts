@@ -71,7 +71,7 @@ test('formatRetrieval renders top hits, trims snippet, first pointer only', () =
     { kind: 'concept', title: 'PKCE', pointer: 'src/pkce.ts, src/client.ts', snippet: 'Validates   the   challenge.', score: 1 },
   ] } as any;
   const txt = strip(formatRetrieval(ask)!);
-  assert.match(txt, /starting points for this task/); // pointers-only header (no inlined code)
+  assert.match(txt, /structural starting points/); // pointers-only header (no inlined code)
   assert.match(txt, /PKCE: src\/pkce\.ts/);
   assert.match(txt, /Validates the challenge\./); // snippet trimmed, own line
   assert.doesNotMatch(txt, /client\.ts/); // only the first pointer segment
@@ -81,15 +81,15 @@ test('formatRetrieval keeps the substitutive header when code is inlined', () =>
   const ask = { query: 'pkce', mode: 'lexical', hits: [
     { kind: 'symbol', title: 'verify', pointer: 'src/pkce.ts:L1-L4', snippet: 's', score: 1, code: 'a\nb' },
   ] } as any;
-  assert.match(strip(formatRetrieval(ask)!), /retrieved context, read these spans/);
+  assert.match(strip(formatRetrieval(ask)!), /retrieved structural context; verify authoritative source/);
 });
 
-test('formatRetrieval appends a tokens-saved line when ask reports a baseline', () => {
+test('formatRetrieval does not append savings claims even when ask reports a baseline', () => {
   const ask = { query: 'pkce', mode: 'lexical', saved: { files: 1, baselineChars: 8000 }, hits: [
     { kind: 'symbol', title: 'verify', pointer: 'src/pkce.ts:L1-L4', snippet: 's', score: 1, code: 'a\nb' },
   ] } as any;
   const txt = strip(formatRetrieval(ask)!);
-  assert.match(txt, /tokens saved ≈ [\d,]+ \(\d+%\)/);
+  assert.doesNotMatch(txt, /tokens saved/i);
 });
 
 test('formatRetrieval returns null for no hits', () => {
@@ -117,7 +117,7 @@ test('relevantRetrieval injects on good coverage and records pointers', () => {
 test('relevantRetrieval nudges instead of injecting when the match is weak both ways', () => {
   const s = freshSession();
   const txt = relevantRetrieval(gateAsk({ coverage: 0.2, coverageStrong: 0.05 }), s);
-  assert.match(txt ?? '', /no strong match/, 'a weak pack is replaced by a named command');
+  assert.match(txt ?? '', /no strong structural match/, 'a weak pack is replaced by a named command');
   assert.match(txt ?? '', /graft ask/, 'the nudge names the command to run');
   assert.deepEqual(s.injectedPointers, [], 'nothing recorded — no pack was shown');
 });
@@ -134,7 +134,7 @@ test('relevantRetrieval: the traced turn-1 regression is now rejected', () => {
   // 0.015 and injected three test files for a question answered elsewhere.
   const s = freshSession();
   const txt = relevantRetrieval(gateAsk({ coverage: 0.1649, coverageStrong: 0.0329 }), s);
-  assert.match(txt ?? '', /no strong match/);
+  assert.match(txt ?? '', /no strong structural match/);
   assert.match(txt ?? '', /0\.03/, 'the nudge reports the strength it measured');
   assert.deepEqual(s.injectedPointers, []);
 });
@@ -172,23 +172,17 @@ test('relevantRetrieval drops already-injected pointers, skips when none are fre
   assert.doesNotMatch(txt, /verify/, 'stale hit dropped from the pack');
 });
 
-test('formatOrientation labels and truncates to budget', () => {
+test('formatOrientation is short, selective, and source-verifying', () => {
   const md = 'X'.repeat(3000);
   const out = strip(formatOrientation(md, 1500));
   assert.match(out, /repo map/);
-  assert.match(out, /reach for graft first/, 'always-on usage directive present');
-  assert.match(out, /Already know the file or symbol to change\?/, 'known-target edit guidance present');
-  // index truncated to budget (1500) + the fixed usage directive (per-tool descriptions + discipline).
-  assert.match(out, /Refactor, rename, or multi-file change?/, 'refactor blast-radius nudge present');
-  // The guard is on the INDEX being trimmed, not on the directive's exact byte
-  // count: an untrimmed 3000-char index would land near 5200. The ceiling has
-  // deliberate slack so teaching the directive one more thing (dollar values,
-  // 0.7.x) doesn't fail a test that is watching something else.
-  assert.ok(out.length < 4000, 'index trimmed to budget; only the fixed directive adds to it');
-  // Regression: `graft impact` was folded into `graft callers --depth` in 0.6.0 —
-  // the always-on directive must teach the current command, not a dead one.
-  assert.doesNotMatch(out, /graft impact\b/, 'does not teach the removed `graft impact` command');
-  assert.match(out, /graft callers .*--depth/, 'teaches blast radius via callers --depth instead');
+  assert.match(out, /Use Graft selectively/);
+  assert.match(out, /graft callers/);
+  assert.match(out, /known file, symbol, literal/i);
+  assert.match(out, /source, rg, or LSP/i);
+  assert.match(out, /not authoritative truth/i);
+  assert.doesNotMatch(out, /tokens saved|🌱|reach for graft first/i);
+  assert.ok(out.length < 2300, '1500-byte index plus a concise directive');
 });
 
 test('formatOrientation prepends a staleness banner when one is supplied', () => {
@@ -196,7 +190,7 @@ test('formatOrientation prepends a staleness banner when one is supplied', () =>
   const note = '⚠ graft index may be ahead of your working tree: 3 of 40 indexed files are not on disk';
   const out = strip(formatOrientation(md, 1500, note));
   // banner rides ABOVE the directive so it is the first thing the agent reads.
-  assert.ok(out.indexOf('ahead of your working tree') < out.indexOf('reach for graft first'), 'banner precedes the directive');
+  assert.ok(out.indexOf('ahead of your working tree') < out.indexOf('Use Graft selectively'), 'banner precedes the directive');
   // absent by default (fresh index) — no banner noise when nothing supplied.
   assert.doesNotMatch(strip(formatOrientation(md, 1500)), /ahead of your working tree/);
 });
@@ -212,19 +206,9 @@ test('renderSubagent without a query still shows the agent', () => {
   assert.match(out, /Plan/);
 });
 
-test('renderStatusline carries the dollar value once the session has been billed', () => {
+test('renderStatusline never presents the legacy savings estimate', () => {
   const stats = { ...emptyStats(), nodeCount: 1, edgeCount: 0, totalCount: 1 };
-  const s = { ...freshSession(), savedTokens: 100_000, inputCostMicros: 600_000, inputTokensBilled: 1_000_000 };
-  const line = strip(renderStatusline(stats, s as any, { ctxPct: null })[0]);
-  assert.match(line, /~100,000 tok saved · ~\$0\.06/);
-});
-
-test('renderStatusline shows tokens alone until a turn has been billed', () => {
-  // Turn one of every session, and every turn on a host that exposes no
-  // transcript. Tokens are still true; a price nobody measured is not.
-  const stats = { ...emptyStats(), nodeCount: 1, edgeCount: 0, totalCount: 1 };
-  const s = { ...freshSession(), savedTokens: 100_000 };
-  const line = strip(renderStatusline(stats, s as any, { ctxPct: null })[0]);
-  assert.match(line, /~100,000 tok saved/);
-  assert.doesNotMatch(line, /\$/);
+  const session = { ...freshSession(), savedTokens: 100_000, inputCostMicros: 600_000, inputTokensBilled: 1_000_000 };
+  const line = strip(renderStatusline(stats, session as any, { ctxPct: null })[0]);
+  assert.doesNotMatch(line, /saved|\$/i);
 });

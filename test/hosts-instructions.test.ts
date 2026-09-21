@@ -2,25 +2,28 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { instructionBody, cursorRule, kiroSteering, windsurfRule } from '../src/hosts/instructions.js';
 
-test('canonical body names the three essentials', () => {
+test('canonical body teaches selective structural use and source verification', () => {
   const b = instructionBody();
-  assert.match(b, /^## Graft — repo context graph/m);
-  assert.match(b, /graft ask "/);
-  assert.match(b, /graft\/INDEX\.md/);
-  assert.match(b, /graft build/);
-  assert.match(b, /every occurrence|enumerate with grep/i, 'teaches the exhaustive-task grep rule');
-  assert.match(b, /callers/, 'teaches the callers/callees/impact commands');
-  assert.match(b, /truncated/i, 'tells the agent to follow up on truncated spans');
-  assert.match(b, /graft grep/, 'routes sweeps to graft grep');
-  assert.match(b, /graft map/, 'tells the agent to orient with graft map before exploring');
-  assert.match(b, /\[scope\/\]/, 'teaches the [scope/] label on multi-scope/monorepo hits');
-  assert.match(b, /--in <scope>\//, 'teaches narrowing with ask --in <scope>/');
+  assert.match(b, /^## Graft — structural repo map/m);
+  assert.match(b, /graft ask/);
+  assert.match(b, /graft callers/);
+  assert.match(b, /graft skeleton/);
+  assert.match(b, /graft grep/);
+  assert.match(b, /graft map/);
+  assert.match(b, /known file, symbol, literal, RPC id, type, store/i);
+  assert.match(b, /source, `rg`, or LSP\/reference search/);
+  assert.match(b, /navigation evidence, not authoritative truth/i);
+  assert.match(b, /ranked top-N/i);
+  assert.match(b, /high-risk work/i);
+  assert.doesNotMatch(b, /For ANY task/i);
+  assert.doesNotMatch(b, /top node IS the answer/i);
+  assert.doesNotMatch(b, /tokens saved/i);
   assert.ok(!/\bhook|statusline\b/i.test(b), 'no host-specific machinery in the shared body');
 });
 
-test('cursor rule has alwaysApply frontmatter and the body', () => {
+test('cursor rule has alwaysApply frontmatter, selective description, and the body', () => {
   const r = cursorRule();
-  assert.match(r, /^---\ndescription: .+\nalwaysApply: true\n---\n/);
+  assert.match(r, /^---\ndescription: Use Graft selectively.+\nalwaysApply: true\n---\n/);
   assert.ok(r.includes(instructionBody()));
 });
 

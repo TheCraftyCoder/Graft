@@ -1,24 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeGraftSettings } from '../src/claude/settings-merge.js';
+import { mergeGraftHooks, mergeGraftSettings } from '../src/claude/settings-merge.js';
 
 const SL = 'node "${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-statusline.cjs"';
 
-test('empty settings gets the full Graft blocks', () => {
+test('empty settings gets only the lightweight project hooks', () => {
   const { merged, warnings } = mergeGraftSettings({});
   assert.equal(merged.statusLine.command, SL);
   assert.equal(merged.subagentStatusLine.command, SL);
-  assert.ok(Array.isArray(merged.hooks.PostToolUse));
+  assert.equal(merged.hooks.PostToolUse.length, 1);
   assert.equal(merged.hooks.PostToolUse[0].matcher, 'Write|Edit|MultiEdit');
-  for (const e of ['PostToolUse', 'UserPromptSubmit', 'SessionStart', 'Stop']) {
-    assert.ok(merged.hooks[e][0].hooks[0].command.includes('graft-hooks.cjs'), `${e} wired`);
-  }
-  // PostToolUse carries a second graft block: the usage-mix + tokens-saved
-  // accumulator over the retrieval tools (Bash `graft …`, the graft_* MCP tools)
-  // and the source-read tools (Read/Grep/Glob) it scores against.
-  const savings = merged.hooks.PostToolUse[1];
-  assert.equal(savings.matcher, 'Bash|mcp__graft__|Read|Grep|Glob');
-  assert.ok(savings.hooks[0].command.includes('tool-savings'), 'savings hook wired');
+  assert.ok(merged.hooks.PostToolUse[0].hooks[0].command.includes('post-edit'));
+  assert.equal(merged.hooks.Stop.length, 1);
+  assert.ok(merged.hooks.Stop[0].hooks[0].command.includes(' stop'));
+  assert.equal(merged.hooks.UserPromptSubmit, undefined);
+  assert.equal(merged.hooks.SessionStart, undefined);
+  assert.doesNotMatch(JSON.stringify(merged.hooks), /tool-savings| session-start| prompt/);
   assert.ok(merged.footerLinksRegexes.includes('graft/[\\w./-]+\\.md'));
   assert.deepEqual(warnings, []);
 });
@@ -78,22 +75,63 @@ test('GRAFT_NO_STATUSLINE=1 skips installing a statusLine', () => {
   }
 });
 
-test('existing foreign hooks are preserved; Graft appended', () => {
+test('existing foreign hooks are preserved and the lightweight Graft hook is appended', () => {
   const existing = { hooks: { PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'mine.sh' }] }] } };
   const { merged } = mergeGraftSettings(existing);
-  // foreign block + graft's two PostToolUse blocks (post-edit, tool-savings).
-  assert.equal(merged.hooks.PostToolUse.length, 3);
+  assert.equal(merged.hooks.PostToolUse.length, 2);
   assert.equal(merged.hooks.PostToolUse[0].hooks[0].command, 'mine.sh');
-  assert.ok(merged.hooks.PostToolUse[1].hooks[0].command.includes('graft-hooks.cjs'));
-  assert.ok(merged.hooks.PostToolUse[2].hooks[0].command.includes('graft-hooks.cjs'));
+  assert.ok(merged.hooks.PostToolUse[1].hooks[0].command.includes('post-edit'));
 });
 
-test('re-running is idempotent (no duplicate Graft entries or footer)', () => {
+test('re-running is idempotent and removes obsolete Graft hook events', () => {
   const once = mergeGraftSettings({}).merged;
   const twice = mergeGraftSettings(once).merged;
-  assert.equal(twice.hooks.PostToolUse.length, 2); // post-edit + tool-savings, not duplicated
+  assert.equal(twice.hooks.PostToolUse.length, 1);
   assert.equal(twice.hooks.Stop.length, 1);
+  assert.equal(twice.hooks.UserPromptSubmit, undefined);
+  assert.equal(twice.hooks.SessionStart, undefined);
   assert.equal(twice.footerLinksRegexes.filter((r: string) => r === 'graft/[\\w./-]+\\.md').length, 1);
+});
+
+test('re-init migrates old Graft hooks away while preserving foreign hooks', () => {
+  const graft = (arg: string) => ({ hooks: [{ type: 'command', command: `node ".claude/helpers/graft-hooks.cjs" ${arg}` }] });
+  const existing = { hooks: {
+    PostToolUse: [
+      { matcher: 'Write|Edit|MultiEdit', ...graft('post-edit') },
+      { matcher: 'Bash|mcp__graft__|Read|Grep|Glob', ...graft('tool-savings') },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: 'mine-post.sh' }] },
+    ],
+    UserPromptSubmit: [graft('prompt'), { hooks: [{ type: 'command', command: 'mine-prompt.sh' }] }],
+    SessionStart: [graft('session-start')],
+    Stop: [graft('stop')],
+  } };
+  const { merged } = mergeGraftSettings(existing);
+  assert.equal(merged.hooks.PostToolUse.length, 2);
+  assert.equal(merged.hooks.PostToolUse[0].hooks[0].command, 'mine-post.sh');
+  assert.ok(merged.hooks.PostToolUse[1].hooks[0].command.includes('post-edit'));
+  assert.equal(merged.hooks.UserPromptSubmit.length, 1);
+  assert.equal(merged.hooks.UserPromptSubmit[0].hooks[0].command, 'mine-prompt.sh');
+  assert.equal(merged.hooks.SessionStart, undefined);
+  assert.equal(merged.hooks.Stop.length, 1);
+  assert.ok(merged.hooks.Stop[0].hooks[0].command.includes(' stop'));
+});
+
+test('global merge removes Graft-owned hooks and installs no replacements', () => {
+  const graft = (arg: string) => ({ hooks: [{ type: 'command', command: `node "/home/me/.claude/helpers/graft-hooks.cjs" ${arg}` }] });
+  const existing = { hooks: {
+    PostToolUse: [graft('post-edit'), { matcher: 'Bash', hooks: [{ type: 'command', command: 'mine.sh' }] }],
+    UserPromptSubmit: [graft('prompt')],
+    SessionStart: [graft('session-start')],
+    Stop: [graft('stop')],
+  } };
+  const { merged } = mergeGraftHooks(existing, '/home/me/.claude/helpers');
+  assert.equal(merged.hooks.PostToolUse.length, 1);
+  assert.equal(merged.hooks.PostToolUse[0].hooks[0].command, 'mine.sh');
+  assert.equal(merged.hooks.UserPromptSubmit, undefined);
+  assert.equal(merged.hooks.SessionStart, undefined);
+  assert.equal(merged.hooks.Stop, undefined);
+  assert.doesNotMatch(JSON.stringify(merged), /graft-hooks\.cjs/);
+  assert.deepEqual(mergeGraftHooks({}, '/tmp').merged, {});
 });
 
 test('foreign top-level keys survive', () => {
