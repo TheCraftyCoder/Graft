@@ -3,7 +3,9 @@
  * is now only a tiny compatibility pointer.
  *
  * The shared .agents skill is reused by Codex/OpenCode, Cursor, Gemini, and
- * Copilot. Kiro/Windsurf use native project paths; Hermes' documented primary
+ * Copilot. Kiro uses its native project path; Windsurf uses its native
+ * model-decision rule because current Windsurf skill discovery is less stable;
+ * Hermes' documented primary
  * skill store is user-global. Claude, Grok, AdaL, and Antigravity already have
  * native skill writers elsewhere in Graft.
  */
@@ -25,8 +27,6 @@ const SPECS: SkillSpec[] = [
     path: (repo) => join(repo,'.agents','skills','graft','SKILL.md'), scope: 'repo' },
   { hosts: ['kiro'], id: 'kiro-skill',
     path: (repo) => join(repo,'.kiro','skills','graft','SKILL.md'), scope: 'repo' },
-  { hosts: ['windsurf'], id: 'windsurf-skill',
-    path: (repo) => join(repo,'.windsurf','skills','graft','SKILL.md'), scope: 'repo' },
   { hosts: ['hermes'], id: 'hermes-skill',
     path: (_repo,home) => join(home,'.hermes','skills','graft','SKILL.md'), scope: 'global' },
 ];

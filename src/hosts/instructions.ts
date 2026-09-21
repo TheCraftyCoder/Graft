@@ -55,8 +55,9 @@ ${instructionHint()}
 
 export function windsurfRule(): string {
   return `---
-trigger: manual
+trigger: model_decision
+description: Use Graft for callers/callees, blast radius, dependency topology, compact file APIs, or unfamiliar architecture; not for direct known lookups.
 ---
-${instructionHint()}
+${instructionBody()}
 `;
 }

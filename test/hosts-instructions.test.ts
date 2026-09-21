@@ -42,8 +42,8 @@ test('kiro compatibility steering is manual; the skill handles automatic discove
   assert.ok(r.includes(instructionHint()));
 });
 
-test('windsurf compatibility rule is manual; the skill handles automatic discovery', () => {
+test('windsurf uses model-decision loading: description always, full body only when relevant', () => {
   const r = windsurfRule();
-  assert.match(r, /^---\ntrigger: manual\n---\n/);
-  assert.ok(r.includes(instructionHint()));
+  assert.match(r, /^---\ntrigger: model_decision\ndescription: .+\n---\n/);
+  assert.ok(r.includes(instructionBody()));
 });

@@ -17,7 +17,7 @@ not occupy every prompt.
 - Gemini CLI: shared `.agents/skills` skill; `GEMINI.md` keeps only a tiny pointer.
 - GitHub Copilot: shared `.agents/skills` skill; repository custom instructions keep only a tiny pointer.
 - Kiro: `.kiro/skills/graft/SKILL.md`; old steering is manual-only.
-- Windsurf/Cascade: `.windsurf/skills/graft/SKILL.md`; old rule is manual-only.
+- Windsurf/Cascade: native `.windsurf/rules/graft.md` with `trigger: model_decision`; only its description is persistent and the full body loads when relevant.
 - Grok and AdaL: their existing native skill paths.
 - Hermes: user skill store `~/.hermes/skills/graft/SKILL.md`.
 - Google Antigravity: existing global Gemini skill; bare `.agents/` is not proof

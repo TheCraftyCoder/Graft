@@ -13,20 +13,18 @@ test('shared .agents skill covers Codex/OpenCode, Cursor, Gemini and Copilot onc
   assert.equal(t.filter((x) => x.path === join(repo, '.agents', 'skills', 'graft', 'SKILL.md')).length, 1);
 });
 
-test('Kiro and Windsurf get native project skills; Hermes gets its global skill', () => {
+test('Kiro gets a native project skill; Hermes gets its global skill', () => {
   const repo = fresh(); const home = fresh();
-  const t = hostSkillTargets(repo, ['kiro', 'windsurf', 'hermes'], { home });
+  const t = hostSkillTargets(repo, ['kiro', 'hermes'], { home });
   assert.ok(t.some((x) => x.path === join(repo, '.kiro', 'skills', 'graft', 'SKILL.md') && x.scope === 'repo'));
-  assert.ok(t.some((x) => x.path === join(repo, '.windsurf', 'skills', 'graft', 'SKILL.md') && x.scope === 'repo'));
   assert.ok(t.some((x) => x.path === join(home, '.hermes', 'skills', 'graft', 'SKILL.md') && x.scope === 'global'));
 });
 
 test('--no-global suppresses only Hermes; project skills still install', () => {
   const repo = fresh(); const home = fresh();
-  const w = installHostSkills(repo, ['agents', 'kiro', 'windsurf', 'hermes'], { home, global: false });
+  const w = installHostSkills(repo, ['agents', 'kiro', 'hermes'], { home, global: false });
   assert.ok(existsSync(join(repo, '.agents', 'skills', 'graft', 'SKILL.md')));
   assert.ok(existsSync(join(repo, '.kiro', 'skills', 'graft', 'SKILL.md')));
-  assert.ok(existsSync(join(repo, '.windsurf', 'skills', 'graft', 'SKILL.md')));
   assert.ok(!existsSync(join(home, '.hermes', 'skills', 'graft', 'SKILL.md')));
   assert.ok(w.every((x) => readFileSync(x.path, 'utf8').includes('navigation evidence')));
 });
