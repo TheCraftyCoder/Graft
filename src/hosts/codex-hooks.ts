@@ -32,27 +32,22 @@ export function hookTargets(home: string): PlannedWrite[] {
     {
       hostId: 'agents', id: 'codex-hooks',
       path: join(base, 'hooks.json'),
-      scope: 'global', kind: 'hook', what: 'SessionStart / UserPromptSubmit / PostToolUse / Stop',
+      scope: 'global', kind: 'hook', what: 'PostToolUse / Stop',
     },
   ];
 }
 
 /**
- * The graft hook entries Codex should carry, mirroring the Claude Code set:
- *   - SessionStart → orientation from `graft/INDEX.md`
- *   - UserPromptSubmit → the coupling-seed retrieval pack (the accuracy hook)
- *   - PostToolUse (an edit) → blast radius + mark the graph dirty
- *   - Stop → one background graph sync at turn end (not after every edit)
- * `matcher` is omitted where Codex ignores it (UserPromptSubmit, Stop). The edit
- * matcher includes `apply_patch` — Codex's native edit tool — alongside the
- * Claude Code edit-tool names, and `hooks.ts`'s `editedFilePath` reads the touched
- * file out of either shape.
+ * Lightweight Codex active layer. Structural retrieval is model-invoked through
+ * the skill/MCP; hooks only keep the graph fresh after edits and sync once at
+ * turn end. Legacy event names remain only so re-init removes Graft-owned
+ * SessionStart/UserPromptSubmit entries without touching foreign hooks.
  */
-interface DesiredEntry { event: string; matcher?: string; sub: string; timeout: number; }
+const GRAFT_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop'] as const;
+type GraftEvent = typeof GRAFT_EVENTS[number];
+interface DesiredEntry { event: GraftEvent; matcher?: string; sub: string; timeout: number; }
 function desiredEntries(): DesiredEntry[] {
   return [
-    { event: 'SessionStart', matcher: 'startup|resume|compact', sub: 'session-start', timeout: 10000 },
-    { event: 'UserPromptSubmit', sub: 'prompt', timeout: 15000 },
     { event: 'PostToolUse', matcher: 'apply_patch|Write|Edit|MultiEdit', sub: 'post-edit', timeout: 10000 },
     { event: 'Stop', sub: 'stop', timeout: 10000 },
   ];
@@ -74,14 +69,22 @@ export function installCodexHooks(home: string): ConfigWrite[] {
   const hooks = (root.hooks ??= {});
   if (typeof hooks !== 'object' || hooks === null || Array.isArray(hooks)) return [shimWrite, skipped];
 
-  for (const d of desiredEntries()) {
-    if (hooks[d.event] !== undefined && !Array.isArray(hooks[d.event])) return [shimWrite, skipped];
-    const prior: unknown[] = Array.isArray(hooks[d.event]) ? hooks[d.event] : [];
+  for (const event of GRAFT_EVENTS) {
+    if (hooks[event] !== undefined && !Array.isArray(hooks[event])) return [shimWrite, skipped];
+  }
+  const desired = new Map<GraftEvent, DesiredEntry>(desiredEntries().map((d) => [d.event, d]));
+  for (const event of GRAFT_EVENTS) {
+    const prior: unknown[] = Array.isArray(hooks[event]) ? hooks[event] : [];
+    const foreign = prior.filter((e) => !isGraftEntry(e));
+    const d = desired.get(event);
+    if (!d) {
+      if (foreign.length) hooks[event] = foreign;
+      else delete hooks[event];
+      continue;
+    }
     const handler = { type: 'command', command: `node "${shimPath}" ${d.sub}`, timeout: d.timeout };
     const entry = d.matcher ? { matcher: d.matcher, hooks: [handler] } : { hooks: [handler] };
-    // Preserve foreign entries in this event; replace any prior graft entry so an
-    // upgrade re-points to the current shim/sub-command instead of stacking.
-    hooks[d.event] = [...prior.filter((e) => !isGraftEntry(e)), entry];
+    hooks[event] = [...foreign, entry];
   }
 
   if (JSON.stringify(root) === before) return [shimWrite, { id: 'codex-hooks', path: cfgPath, action: 'unchanged' }];

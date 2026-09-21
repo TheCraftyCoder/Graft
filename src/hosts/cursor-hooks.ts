@@ -54,22 +54,23 @@ export function cursorHookTargets(repo: string): PlannedWrite[] {
     {
       hostId: 'cursor', id: 'cursor-hooks',
       path: configPathFor(repo),
-      scope: 'repo', kind: 'hook', what: 'postToolUse / afterMCPExecution / sessionEnd',
+      scope: 'repo', kind: 'hook', what: 'afterFileEdit / stop',
     },
   ];
 }
 
 /**
- * The graft hook entries Cursor should carry. `matcher` is set only where Cursor
- * filters by tool (postToolUse); `afterMCPExecution` fires for every MCP tool and
- * `sessionEnd` for none, so they carry no matcher.
+ * Lightweight Cursor active layer. afterFileEdit marks the graph dirty and stop
+ * performs one background sync. Legacy telemetry event names remain only so
+ * upgrades remove Graft-owned entries from older installs.
  */
-interface DesiredEntry { event: string; matcher?: string; sub: string; }
+const GRAFT_EVENTS = ['postToolUse', 'afterMCPExecution', 'sessionEnd', 'afterFileEdit', 'stop'] as const;
+type GraftEvent = typeof GRAFT_EVENTS[number];
+interface DesiredEntry { event: GraftEvent; matcher?: string; sub: string; }
 function desiredEntries(): DesiredEntry[] {
   return [
-    { event: 'postToolUse', matcher: 'Read|Grep|Glob|Search|Shell', sub: 'cursor-post-tool' },
-    { event: 'afterMCPExecution', sub: 'cursor-mcp' },
-    { event: 'sessionEnd', sub: 'cursor-session-end' },
+    { event: 'afterFileEdit', sub: 'post-edit' },
+    { event: 'stop', sub: 'stop' },
   ];
 }
 
@@ -94,12 +95,22 @@ export function installCursorHooks(repo: string): ConfigWrite[] {
   const hooks = (root.hooks ??= {});
   if (typeof hooks !== 'object' || hooks === null || Array.isArray(hooks)) return [shimWrite, skipped];
 
-  for (const d of desiredEntries()) {
-    if (hooks[d.event] !== undefined && !Array.isArray(hooks[d.event])) return [shimWrite, skipped];
-    const prior: unknown[] = Array.isArray(hooks[d.event]) ? hooks[d.event] : [];
+  for (const event of GRAFT_EVENTS) {
+    if (hooks[event] !== undefined && !Array.isArray(hooks[event])) return [shimWrite, skipped];
+  }
+  const desired = new Map<GraftEvent, DesiredEntry>(desiredEntries().map((d) => [d.event, d]));
+  for (const event of GRAFT_EVENTS) {
+    const prior: unknown[] = Array.isArray(hooks[event]) ? hooks[event] : [];
+    const foreign = prior.filter((e) => !isGraftEntry(e));
+    const d = desired.get(event);
+    if (!d) {
+      if (foreign.length) hooks[event] = foreign;
+      else delete hooks[event];
+      continue;
+    }
     const command = `node "${shimPath}" ${d.sub}`;
     const entry = d.matcher ? { matcher: d.matcher, command } : { command };
-    hooks[d.event] = [...prior.filter((e) => !isGraftEntry(e)), entry];
+    hooks[event] = [...foreign, entry];
   }
 
   if (JSON.stringify(root) === before) return [shimWrite, { id: 'cursor-hooks', path: cfgPath, action: 'unchanged' }];
