@@ -52,6 +52,17 @@ unrelated repositories.
   cloud agents; they are enough for edit freshness + one end-of-turn sync.
   https://cursor.com/docs/hooks
 
+## Why on-demand ("pull") is also an accuracy choice
+
+Upstream Graft's current README reports its own agent harness with equal
+correctness for cold versus pushed Graft context (93%/93%), while the pull
+variant — Graft tools available but context requested on demand — reached 98%
+correctness. Treat this as upstream's self-reported harness rather than an
+independent benchmark, but it supports the same design direction as skills:
+make strong structural context easy to pull without forcing it into every turn.
+
+https://github.com/trailhq/Graft/blob/main/README.md
+
 ## Retrieval accuracy: measure before changing ranking
 
 Agent Retrieval Bench (2026) contains 427 workflow-derived samples across 25
@@ -89,7 +100,11 @@ multi-path retrieval, query construction, and preference-aligned reranking.
 3. **Benchmark whole-file lexical retrieval at the file stage.** A cheap
    raw-file BM25/lexical candidate source is a useful complement and a strong
    baseline; compare it against current symbol/body retrieval rather than
-   replacing current ranking by assumption.
+   replacing current ranking by assumption. Upstream issue #257 is already
+   exploring this exact file-first direction and reports that naive/strong
+   one-hop propagation can regress some repositories, which reinforces the need
+   for relation-aware, budgeted evaluation rather than a blanket graph boost.
+   https://github.com/trailhq/Graft/issues/257
 4. **Evaluate bounded one-hop expansion.** Expand only high-confidence seeds,
    weight relation kinds separately, and enforce strict file/token budgets.
    Compare imports/references/calls independently; never flood the candidate set.
