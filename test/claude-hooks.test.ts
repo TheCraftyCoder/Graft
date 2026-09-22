@@ -5,9 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { underGraft, main, lastFileScopeHint, promptAskTimeout } from '../src/claude/hooks.js';
 import { readStats, readSession } from '../src/claude/state.js';
-import { runSync } from '../src/claude/sync-run.js';
-import { savingsLine } from '../src/context/savings.js';
-import { CI_ENV_VARS } from '../src/telemetry/gate.js';
+import { runSync, SYNC_BUILD_TIMEOUT_MS } from '../src/claude/sync-run.js';
 import { writeStats, emptyStats, acquireLock, resolveContextDir } from '../src/claude/state.js';
 
 test('underGraft detects edits inside graft/', () => {
@@ -27,6 +25,31 @@ test('post-edit marks dirty and records lastFile', async () => {
   const s = readStats(d)!;
   assert.equal(s.dirty, true);
   assert.equal(s.lastFile, 'auth.ts');
+  assert.equal(s.staleCount, 0, 'edit hook does not run a full drift check');
+});
+
+test('post-edit is context-free and does not invoke the Graft CLI', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'graft-hooks-light-'));
+  process.env.CLAUDE_PROJECT_DIR = d;
+  const marker = join(d, 'cli-ran.txt');
+  const stub = join(d, 'cli-stub.cjs');
+  writeFileSync(stub, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran');\n`);
+  process.env.GRAFT_TEST_CLI = stub;
+  const chunks: string[] = [];
+  const orig = process.stdout.write.bind(process.stdout);
+  (process.stdout as any).write = (x: any) => { chunks.push(String(x)); return true; };
+  try {
+    await runWithStdin(
+      JSON.stringify({ tool_input: { file_path: join(d, 'src', 'a.ts') } }),
+      () => main('post-edit'),
+    );
+  } finally {
+    (process.stdout as any).write = orig;
+    delete process.env.GRAFT_TEST_CLI;
+    delete process.env.CLAUDE_PROJECT_DIR;
+  }
+  assert.equal(existsSync(marker), false, 'no graft check/query child process');
+  assert.equal(chunks.join(''), '', 'no blast-radius context injected after edits');
 });
 
 test('post-edit ignores edits inside graft/', async () => {
@@ -75,6 +98,10 @@ test('post-edit-sync on a file under graft/ does not mark dirty', async () => {
   // dir so there is no prior state to inherit — stats are either absent or dirty: false.
   const s = readStats(d);
   assert.equal(s === null || s.dirty === false, true, 'dirty not newly set by this call');
+});
+
+test('background sync build timeout allows large repositories to finish', () => {
+  assert.equal(SYNC_BUILD_TIMEOUT_MS, 10 * 60 * 1000);
 });
 
 test('runSync clears dirty/syncing, recomputes stats, releases lock', () => {
@@ -452,21 +479,6 @@ test('tool-savings is a no-op (no session file) when the tool output has no graf
   }
 });
 
-test('tool-savings counts a REAL savings line (with the turn nudge) exactly once', async () => {
-  const d = mkdtempSync(join(tmpdir(), 'graft-savings-real-'));
-  process.env.CLAUDE_PROJECT_DIR = d;
-  try {
-    // body ≈ 10 tok, baseline ≈ 2000 tok → footer claims ≈ 1990 saved. The nudge
-    // (with its "🌱 graft saved ~N tokens" example) must NOT be double-counted.
-    const footer = savingsLine('x'.repeat(40), { files: 2, baselineChars: 8000 });
-    const stdin = JSON.stringify({ session_id: 'real', tool_response: { stdout: `callers …${footer}` } });
-    await runWithStdin(stdin, () => main('tool-savings'));
-    assert.equal(readSession(d, 'real').savedTokens, 1990);
-  } finally {
-    delete process.env.CLAUDE_PROJECT_DIR;
-  }
-});
-
 // ── the usage-mix counters: graft vs source (both hosts) ───────────────────
 
 test('tool-savings now scores the mix: a Read is a source read, a graft footer is a graft read', async () => {
@@ -542,34 +554,24 @@ test('cursor-mcp: a graft MCP tool is a graft read with savings from result_json
   }
 });
 
-test('cursor-session-end force-closes THIS conversation even though its file was just touched (idle gate skipped)', async () => {
+test('cursor-session-end never rolls up usage telemetry in the privacy build', async () => {
   const d = mkdtempSync(join(tmpdir(), 'graft-cursor-end-'));
-  const home = mkdtempSync(join(tmpdir(), 'graft-cursor-end-home-'));
   mkdirSync(join(d, 'graft', '.cache', 'session'), { recursive: true });
   const sfile = join(d, 'graft', '.cache', 'session', 'c1.json');
-  // mtime = now: the idle sweep would skip this, but the end hook must summarize it.
   writeFileSync(sfile, JSON.stringify({ graftReads: 8, sourceReads: 2, savedTokens: 7400 }));
 
-  // Turn telemetry on against a scratch $HOME so the rollup actually queues (and
-  // marks the file), the observable proof the force-close ran — not just no-throw.
-  //
-  // EVERY CI variable has to go, not just `CI`: `inCi` is deliberately generous and
-  // also reads GITHUB_ACTIONS, GITLAB_CI and six more. Clearing `CI` alone passed on
-  // a laptop and failed on GitHub Actions, where GITHUB_ACTIONS is set — so the list
-  // comes from `CI_ENV_VARS` rather than being copied here, and cannot drift from it.
-  const scrubbed = ['HOME', 'USERPROFILE', 'GRAFT_POSTHOG_KEY', 'DO_NOT_TRACK', ...CI_ENV_VARS];
-  const saved = Object.fromEntries(scrubbed.map((k) => [k, process.env[k]]));
-  for (const k of [...CI_ENV_VARS, 'DO_NOT_TRACK']) delete process.env[k];
-  process.env.HOME = home; process.env.USERPROFILE = home;
-  process.env.GRAFT_POSTHOG_KEY = 'phc_test_key';
+  // Even an environment key must not reopen telemetry. The hook remains a
+  // harmless no-op for telemetry bookkeeping and leaves the session unsummarized.
+  const priorKey = process.env.GRAFT_POSTHOG_KEY;
+  process.env.GRAFT_POSTHOG_KEY = 'phc_should_never_be_used';
   process.env.CLAUDE_PROJECT_DIR = d;
   try {
     await runWithStdin(JSON.stringify({ conversation_id: 'c1' }), () => main('cursor-session-end'));
-    assert.equal(readSession(d, 'c1').summarized, true, 'the just-ended conversation was rolled up');
+    assert.notEqual(readSession(d, 'c1').summarized, true);
   } finally {
     delete process.env.CLAUDE_PROJECT_DIR;
-    for (const [k, v] of Object.entries(saved))
-      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    if (priorKey === undefined) delete process.env.GRAFT_POSTHOG_KEY;
+    else process.env.GRAFT_POSTHOG_KEY = priorKey;
   }
 });
 
@@ -703,29 +705,22 @@ test('prompt hook omits --dir when GRAFT_DIR is unset (byte-identical argv to be
   }
 });
 
-test('post-edit passes --dir <resolved> to graft check when GRAFT_DIR is set', async () => {
+test('post-edit with GRAFT_DIR stays context-free and updates relocated state', async () => {
   const d = mkdtempSync(join(tmpdir(), 'graft-postedit-dir-'));
-  mkdirSync(join(d, 'elsewhere', '.graph'), { recursive: true });
-  writeFileSync(join(d, 'elsewhere', '.graph', 'wiring.json'),
-    JSON.stringify({ meta: { nodeCount: 0, edgeCount: 0, languages: [] }, nodes: [], edges: [] }));
+  mkdirSync(join(d, 'elsewhere'), { recursive: true });
+  const marker = join(d, 'cli-ran.txt');
   const stub = join(d, 'check-stub.cjs');
-  const argsFile = join(d, 'args-seen.json');
-  writeFileSync(
-    stub,
-    `const fs = require('fs');\n` +
-      `fs.writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)));\n` +
-      `process.stdout.write(JSON.stringify({ graph: { changed: [], added: [], removed: [] } }));\n`,
-  );
+  writeFileSync(stub, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran');\n`);
   process.env.CLAUDE_PROJECT_DIR = d;
   process.env.GRAFT_TEST_CLI = stub;
   process.env.GRAFT_DIR = 'elsewhere';
   try {
     const stdin = JSON.stringify({ tool_input: { file_path: join(d, 'src', 'auth.ts') } });
     await runWithStdin(stdin, () => main('post-edit'));
-    const argsSeen: string[] = JSON.parse(readFileSync(argsFile, 'utf8'));
-    const dirIdx = argsSeen.indexOf('--dir');
-    assert.ok(dirIdx !== -1, 'the check call carries --dir when GRAFT_DIR is set');
-    assert.equal(argsSeen[dirIdx + 1], resolveContextDir(d));
+    const stats = readStats(d)!;
+    assert.equal(stats.dirty, true);
+    assert.equal(stats.lastFile, 'auth.ts');
+    assert.equal(existsSync(marker), false, 'post-edit does not invoke graft check/query');
   } finally {
     delete process.env.GRAFT_TEST_CLI;
     delete process.env.CLAUDE_PROJECT_DIR;

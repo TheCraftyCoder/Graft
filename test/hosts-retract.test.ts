@@ -123,10 +123,10 @@ test('graft settings fragments are removed and the user\'s own settings kept', (
     statusLine: { type: 'command', command: 'node ".claude/helpers/graft-statusline.cjs"' },
     hooks: {
       PostToolUse: [
-        { matcher: 'Write', hooks: [{ type: 'command', command: 'node graft-hooks.cjs post-edit' }] },
+        { matcher: 'Write', hooks: [{ type: 'command', command: 'node ".claude/helpers/graft-hooks.cjs" post-edit' }] },
         { matcher: 'Bash', hooks: [{ type: 'command', command: 'my-own-hook.sh' }] },
       ],
-      Stop: [{ hooks: [{ type: 'command', command: 'node graft-hooks.cjs stop' }] }],
+      Stop: [{ hooks: [{ type: 'command', command: 'node ".claude/helpers/graft-hooks.cjs" stop' }] }],
     },
     footerLinksRegexes: ['graft/[\\w./-]+\\.md', 'docs/.*'],
     permissions: { allow: ['Bash(graft:*)', 'Bash(ls:*)'] },
@@ -219,6 +219,7 @@ test('a full init is fully retractable, and retraction is idempotent', () => {
     join('.claude', 'helpers', 'graft-hooks.cjs'),
     join('.claude', 'skills', 'graft', 'SKILL.md'),
     join('.cursor', 'rules', 'graft.mdc'),
+    join('.agents', 'skills', 'graft', 'SKILL.md'),
     '.mcp.json',
   ]) {
     assert.ok(!existsSync(join(d, rel)), `${rel} should be gone`);
@@ -255,7 +256,7 @@ test('global sweep strips graft hook entries from Codex hooks.json, keeping fore
   const cfg = write(home, join('.codex', 'hooks.json'), JSON.stringify({
     hooks: {
       PostToolUse: [
-        { hooks: [{ type: 'command', command: 'node "/x/graft-hooks.cjs" post-edit' }] },
+        { hooks: [{ type: 'command', command: 'node "/home/u/.codex/hooks/graft/graft-hooks.cjs" post-edit' }] },
         { hooks: [{ type: 'command', command: 'their-hook.sh' }] },
       ],
     },
@@ -264,6 +265,27 @@ test('global sweep strips graft hook entries from Codex hooks.json, keeping fore
   const root = JSON.parse(readFileSync(cfg, 'utf8'));
   assert.equal(root.hooks.PostToolUse.length, 1);
   assert.equal(root.hooks.PostToolUse[0].hooks[0].command, 'their-hook.sh');
+});
+
+test('a foreign hook that merely mentions the graft filename survives retract', () => {
+  const d = fresh();
+  const home = fresh();
+  const foreign = 'echo see graft-hooks.cjs docs; node ./tools/graft-hooks.cjs.bak';
+  const settings = write(d, join('.claude', 'settings.json'), JSON.stringify({
+    hooks: { Stop: [
+      { hooks: [{ type: 'command', command: foreign }] },
+      { hooks: [{ type: 'command', command: 'node ".cursor/hooks/graft-hooks.cjs" stop' }] },
+    ] },
+  }));
+  mkdirSync(join(home, '.codex'), { recursive: true });
+  const codex = write(home, join('.codex', 'hooks.json'), JSON.stringify({
+    hooks: { Stop: [{ hooks: [{ type: 'command', command: foreign }] }] },
+  }));
+  runRetract(d, { apply: true, home, global: true });
+  const s = JSON.parse(readFileSync(settings, 'utf8'));
+  assert.equal(s.hooks.Stop.length, 1);
+  assert.equal(s.hooks.Stop[0].hooks[0].command, foreign, 'foreign hook kept, graft one removed');
+  assert.equal(JSON.parse(readFileSync(codex, 'utf8')).hooks.Stop[0].hooks[0].command, foreign);
 });
 
 test('emptied directories are pruned, not left hollow', () => {

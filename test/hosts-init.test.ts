@@ -19,7 +19,7 @@ test('writes only detected hosts by default', () => {
   const r = runHostsInit(repo, { home });
   assert.deepEqual(r.written.map((w) => w.id), ['cursor']);
   const mdc = readFileSync(join(repo, '.cursor', 'rules', 'graft.mdc'), 'utf8');
-  assert.match(mdc, /alwaysApply: true/);
+  assert.match(mdc, /alwaysApply: false/);
   assert.ok(!existsSync(join(repo, 'AGENTS.md')));
 });
 
@@ -28,13 +28,13 @@ test('explicit agents list overrides detection and flags unknown ids', () => {
   const r = runHostsInit(repo, { home, agents: ['gemini', 'nope'] });
   assert.deepEqual(r.written.map((w) => w.id), ['gemini']);
   assert.deepEqual(r.unknown, ['nope']);
-  assert.ok(readFileSync(join(repo, 'GEMINI.md'), 'utf8').includes('graft ask'));
+  assert.ok(readFileSync(join(repo, 'GEMINI.md'), 'utf8').includes('on-demand `graft` skill'));
 });
 
 test('all writes every host and re-run converges (idempotent)', () => {
   const home = fresh(); const repo = fresh();
   const first = runHostsInit(repo, { home, all: true });
-  assert.equal(first.written.length, 10);
+  assert.equal(first.written.length, 11);
   const second = runHostsInit(repo, { home, all: true });
   assert.ok(second.written.every((w) => w.action === 'unchanged'));
   // `agents` and `antigravity` share AGENTS.md, but the fenced section is written once
@@ -51,7 +51,7 @@ test('preserves user content around the fenced section', () => {
   assert.deepEqual(r.written.map((w) => w.id), ['copilot']);
   const text = readFileSync(target, 'utf8');
   assert.ok(text.startsWith('# House rules'));
-  assert.ok(text.includes('graft ask'));
+  assert.ok(text.includes('on-demand `graft` skill'));
 });
 
 test('CLI: graft init --agents gemini writes GEMINI.md and exits 0', () => {
@@ -59,7 +59,7 @@ test('CLI: graft init --agents gemini writes GEMINI.md and exits 0', () => {
   execFileSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'init', repo, '--no-build', '--agents', 'gemini'], {
     encoding: 'utf8',
   });
-  assert.ok(readFileSync(join(repo, 'GEMINI.md'), 'utf8').includes('graft ask'));
+  assert.ok(readFileSync(join(repo, 'GEMINI.md'), 'utf8').includes('on-demand `graft` skill'));
 });
 
 test('CLI: unknown agent id exits non-zero', () => {

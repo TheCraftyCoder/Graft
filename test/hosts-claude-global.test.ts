@@ -27,7 +27,6 @@ import { claudeGlobalTargets, globalHelpersDir, installClaudeGlobal } from '../s
 import { runInit } from '../src/claude/init.js';
 import { planRetract, runRetract } from '../src/hosts/retract.js';
 import { planInit } from '../src/hosts/plan.js';
-import { toPosixPath } from '../src/util/paths.js';
 import { tmpRepo } from './helpers.js';
 
 /**
@@ -97,23 +96,19 @@ test('a worktree of a repo that ignores *.json loses both repo-level triggers', 
   assert.equal(existsSync(join(wt, '.mcp.json')), false, 'no MCP server in the worktree');
   assert.equal(existsSync(join(wt, '.claude', 'settings.json')), false, 'no SessionStart hook either');
 
-  // The user-level copy is what covers it: outside the repo, so no .gitignore
-  // reaches it, and Claude Code reads it for every project including this one.
-  assert.ok(existsSync(shimOf(home)));
-  assert.ok(readJson(settingsOf(home)).hooks?.SessionStart, 'user-level SessionStart hook');
+  // The user-scope MCP registration covers worktrees without injecting hooks into every session.
+  assert.equal(existsSync(shimOf(home)), false, 'no user-level hook shim is installed');
+  assert.equal(existsSync(settingsOf(home)), false, 'no user-level Claude hooks/settings are created');
   assert.ok(readJson(userMcpOf(home)).mcpServers?.graft, 'user-scope MCP registration');
 });
 
-test('the user-level hook commands name the shim absolutely, not via CLAUDE_PROJECT_DIR', () => {
+test('global install exposes only the MCP fallback on a fresh home', () => {
   const home = tmpRepo('cgabs');
-  installClaudeGlobal(home);
-
-  const cmd = readJson(settingsOf(home)).hooks.SessionStart[0].hooks[0].command;
-  // The repo form would resolve inside whatever project is open — precisely the
-  // project that has no shim, which is the case this install exists to cover.
-  assert.ok(!cmd.includes('CLAUDE_PROJECT_DIR'), `absolute, got: ${cmd}`);
-  // Posix form: the command uses one separator throughout, on every platform.
-  assert.ok(cmd.includes(toPosixPath(shimOf(home))), `names the user-level shim, got: ${cmd}`);
+  const writes = installClaudeGlobal(home);
+  assert.ok(readJson(userMcpOf(home)).mcpServers?.graft);
+  assert.equal(existsSync(settingsOf(home)), false);
+  assert.equal(existsSync(shimOf(home)), false);
+  assert.deepEqual(writes.map((w) => w.id), ['claude-global-hooks', 'claude-global-mcp']);
 });
 
 /* ------------------------------------------------------------------ *
@@ -130,11 +125,32 @@ test('an existing settings.json keeps every key graft does not own', () => {
   const s = readJson(settingsOf(home));
   assert.equal(s.theme, 'light');
   assert.equal(s.effortLevel, 'high');
-  assert.ok(s.hooks.Stop);
-  // Hooks only: the statusline is a single per-session slot and taking it for every
-  // repo would silently outrank the user's own.
+  assert.equal(s.hooks, undefined, 'no global Graft hooks are installed');
   assert.equal(s.statusLine, undefined, 'no global statusline');
   assert.equal(s.permissions, undefined, 'no global allowlist');
+});
+
+test('global install removes legacy Graft hooks but preserves foreign hooks', () => {
+  const home = tmpRepo('cgmigrate');
+  mkdirSync(join(home, '.claude'), { recursive: true });
+  writeFileSync(settingsOf(home), JSON.stringify({
+    hooks: {
+      SessionStart: [{ hooks: [{ type: 'command', command: 'node "/old/.claude/helpers/graft-hooks.cjs" session-start' }] }],
+      PostToolUse: [
+        { hooks: [{ type: 'command', command: 'node "/old/.claude/helpers/graft-hooks.cjs" post-edit' }] },
+        { hooks: [{ type: 'command', command: 'mine.sh' }] },
+      ],
+    },
+  }, null, 2));
+
+  installClaudeGlobal(home);
+
+  const s = readJson(settingsOf(home));
+  assert.equal(s.hooks.SessionStart, undefined);
+  assert.equal(s.hooks.PostToolUse.length, 1);
+  assert.equal(s.hooks.PostToolUse[0].hooks[0].command, 'mine.sh');
+  assert.doesNotMatch(JSON.stringify(s), /graft-hooks\.cjs/);
+  assert.equal(existsSync(shimOf(home)), false);
 });
 
 test('an existing user-scope MCP server survives, and re-running converges', () => {
@@ -190,10 +206,10 @@ test('planInit reports the global writes so the picker can show them', () => {
   const globals = claude.writes.filter((w) => w.scope === 'global').map((w) => w.path);
 
   assert.deepEqual(globals, claudeGlobalTargets(home).map((t) => t.path));
-  assert.equal(globals.length, 3);
+  assert.equal(globals.length, 2);
 });
 
-test('uninstall removes exactly what the global install added', () => {
+test('uninstall removes the global MCP registration and any legacy hook shim', () => {
   const home = tmpRepo('cgretract');
   const repo = tmpRepo('cgretractrepo');
   mkdirSync(join(home, '.claude'), { recursive: true });
@@ -221,6 +237,6 @@ test('--no-global uninstall leaves the user-level copy in place', () => {
   runInit(repo, { build: false, home });
   runRetract(repo, { home, global: false, apply: true });
 
-  assert.ok(existsSync(shimOf(home)));
-  assert.ok(readJson(settingsOf(home)).hooks?.SessionStart);
+  assert.equal(existsSync(shimOf(home)), false);
+  assert.ok(readJson(userMcpOf(home)).mcpServers?.graft, 'user-scope MCP remains in place');
 });

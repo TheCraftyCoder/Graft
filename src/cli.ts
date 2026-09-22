@@ -40,12 +40,12 @@ import {
   runWorkspaceMap,
 } from "./graph/workspace-cli.js";
 import { formatInitEpilogue } from "./cli-epilogue.js";
-import { planInit, selectedWrites } from "./hosts/plan.js";
+import { planInit, planOperations, selectedWrites } from "./hosts/plan.js";
 import { planRetract, runRetract, changed, type Retraction } from "./hosts/retract.js";
 import { formatNonInteractiveHelp, formatPlan, runPicker } from "./cli-picker.js";
 import { homedir } from "node:os";
 import { formatUpgradeReport, formatVersionReport, getNpmViewVersion, readCurrentVersion, runUpgrade } from "./cli-meta.js";
-import { patchBuildConfig, type BuildConfig } from "./util/state.js";
+import { patchBuildConfig, readLspEnabled, type BuildConfig } from "./util/state.js";
 import { normalizePathPrefix } from "./util/paths.js";
 import { latestSession, formatSessionStats, sessionInputRate } from "./claude/session-metrics.js";
 import { setInputRate } from "./context/savings.js";
@@ -285,8 +285,8 @@ program
         console.log(formatStatus());
         return;
       case "enable":
-        patchState({ enabled: true });
-        console.log("telemetry: on — anonymous, aggregate-only. `graft telemetry status` for details.");
+        patchState({ enabled: false, noticeShownAt: new Date().toISOString() });
+        console.log("telemetry: off — permanently disabled in this build; enable is unavailable.");
         return;
       case "disable":
         // Also stamp the notice as shown: someone who has just opted out should
@@ -398,6 +398,7 @@ program
     // every later no-flag build / hooks refresh) see it identically — the
     // walkDir call sites read it from state, not from a threaded option.
     const buildConfigPatch: BuildConfig = {};
+    if (opts.lsp === true) buildConfigPatch.lsp = true;
     if (opts.includeDir && opts.includeDir.length > 0) {
       // --include-dir takes bare SKIP_DIRS-style directory NAMES (shouldSkipDir
       // compares a single path segment), never paths, and dot-dirs are never
@@ -471,6 +472,7 @@ program
     // Workspace parent: build each child into its OWN graft/ + a workspace index.
     const buildRoot = resolve(dir);
     const buildGlobalDir = program.opts<GlobalOpts>().dir;
+    const effectiveLsp = opts.lsp === true || readLspEnabled(buildRoot);
     if (isWorkspaceBuildRoot(buildRoot, buildGlobalDir)) {
       await runWorkspaceBuild(buildRoot, {
         deep: !!deep,
@@ -481,6 +483,7 @@ program
         includeDirs: opts.includeDir,
         followSubmodules: followSubmodulesWasExplicit ? opts.followSubmodules : undefined,
         followNestedRepos: followNestedReposWasExplicit ? opts.followNestedRepos : undefined,
+        lsp: opts.lsp === true ? true : undefined,
       });
       return;
     }
@@ -515,7 +518,7 @@ program
       llm: deep,
       concurrency,
       reuse: opts.reuse,
-      lsp: opts.lsp,
+      lsp: effectiveLsp,
       onlyDirs,
       onProgress: ({ phase, index, total, file }) =>
         process.stderr.write(
@@ -938,7 +941,7 @@ program
   .description("Wire Graft into the AI coding agents used with this repo (instruction files + MCP server; full hooks + statusline + MCP for Claude Code)")
   .argument("[dir]", "target repo directory", ".")
   .option("--no-build", "skip building the graph (wire files only)")
-  .option("--agents <ids...>", `only these agents (${hostIds().join(", ")}, claude)`)
+  .option("--agents <ids...>", `only these agents (${hostIds().join(", ")}, claude); agents-md writes just the AGENTS.md section (no Codex/OpenCode config or hooks)`)
   .option("--all-agents", "write instruction files for every known agent, detected or not")
   .option("--no-agents", "Claude Code wiring only; skip other agents")
   .option("--list-agents", "list known agent ids and exit")
@@ -948,8 +951,9 @@ program
   .option("--dry-run", "print every file init would touch, then exit without writing")
   .option("-y, --yes", "skip the picker and wire every detected agent (the pre-0.8 default)")
   .option("--no-global", "skip writes outside this repo (the ~/.codex/ config + hooks)")
+  .option("--preserve-unselected", "only create/update the selected agents; never remove or modify wiring for agents you did not select (default: unselected agents' graft wiring is retracted)")
   .option("--brain <handoff>", "attach a Trail brain: <brainId>:<token> (or a bare brain id with GRAFT_BRAIN_TOKEN set)")
-  .action(async (dir: string, opts: { build?: boolean; agents?: string[]; allAgents?: boolean; listAgents?: boolean; mcp?: boolean; hooks?: boolean; statusline?: boolean; dryRun?: boolean; yes?: boolean; global?: boolean; brain?: string }) => {
+  .action(async (dir: string, opts: { preserveUnselected?: boolean; build?: boolean; agents?: string[]; allAgents?: boolean; listAgents?: boolean; mcp?: boolean; hooks?: boolean; statusline?: boolean; dryRun?: boolean; yes?: boolean; global?: boolean; brain?: string }) => {
     if (opts.listAgents) {
       for (const id of [...hostIds(), "claude"]) console.log(id);
       return;
@@ -1031,9 +1035,17 @@ program
     const targets = [repo, ...children.map((c) => join(repo, c))];
 
     if (opts.dryRun) {
-      console.error(formatPlan(plan, ids, repo, home));
+      // Same flag-filtered plan the real run follows: writes AND retractions.
+      const preview = (dir: string) => {
+        const ops = planOperations(dir, ids, {
+          home, mcp: opts.mcp, hooks: opts.hooks, global: opts.global,
+          statusline: statuslineWanted({ statusline: opts.statusline }), preserve: opts.preserveUnselected === true,
+        });
+        return formatPlan(planInit(dir, { home }), ids, dir, home, undefined, { ...ops, preserve: opts.preserveUnselected === true });
+      };
+      console.error(preview(repo));
       for (const child of children)
-        console.error(`\n— ${child}/ (workspace child)\n` + formatPlan(planInit(join(repo, child), { home }), ids, join(repo, child), home));
+        console.error(`\n— ${child}/ (workspace child)\n` + preview(join(repo, child)));
       return;
     }
     if (ids.length === 0) {
@@ -1095,7 +1107,7 @@ function wireTarget(
     cliPath: string;
     plan: ReturnType<typeof planInit>;
     wantClaude: boolean;
-    opts: { build?: boolean; mcp?: boolean; hooks?: boolean; global?: boolean; statusline?: boolean };
+    opts: { build?: boolean; mcp?: boolean; hooks?: boolean; global?: boolean; statusline?: boolean; preserveUnselected?: boolean };
   },
 ): void {
     const { home, cliPath, plan, wantClaude, opts } = ctx;
@@ -1107,9 +1119,13 @@ function wireTarget(
     // `reconcileWiring` then keeps them *up to date*, which is worse than stale.
     // Retract every host NOT being written now; `exclude` spares the ones about to
     // be rewritten, and the graph cache is kept (init is one step from using it).
-    const retracted = changed(
-      runRetract(repo, { home, apply: true, global: opts.global, cache: false, exclude: ids }),
-    ).filter((r) => r.action !== "skipped-unparseable");
+    // `--preserve-unselected` skips convergence entirely: unselected hosts are
+    // never created, updated, or deleted.
+    const retracted = opts.preserveUnselected
+      ? []
+      : changed(
+          runRetract(repo, { home, apply: true, global: opts.global, cache: false, exclude: ids }),
+        ).filter((r) => r.action !== "skipped-unparseable");
     for (const r of retracted) console.error(`- removed ${r.path} (${r.what}) — agent not selected`);
 
     if (wantClaude) {
@@ -1145,6 +1161,7 @@ function wireTarget(
       for (const w of r.written) console.error(`✓ ${w.id}: ${w.path} (${w.action})`);
       for (const m of r.mcp) console.error(`✓ mcp ${m.id}: ${m.path} (${m.action})`);
       for (const h of r.hooks) console.error(`✓ hook ${h.id}: ${h.path} (${h.action})`);
+      for (const sk of r.skills) console.error(`✓ skill ${sk.id}: ${sk.path} (${sk.action})`);
       // Only worth saying when there was actually something out-of-repo to skip.
       if (opts.global === false && selectedWrites(plan, ids).some((w) => w.scope === "global"))
         console.error("· skipped out-of-repo writes (--no-global)");
@@ -1160,6 +1177,7 @@ function wireTarget(
       mcp: opts.mcp !== false,
       hooks: opts.hooks !== false,
       statusline: wantStatusline,
+      preserve: opts.preserveUnselected === true,
     });
 
     // Every host's wiring points at graft/, so the graph is built whatever was

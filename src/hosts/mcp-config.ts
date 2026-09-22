@@ -8,7 +8,7 @@
  * `registerMcpConfigs()` walks that same list to do the writing.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncOptions } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import type { PlannedWrite } from './plan.js';
@@ -46,9 +46,81 @@ export interface McpTarget extends PlannedWrite {
 const NPX_LAUNCH = { command: 'npx', args: ['-y', '@nanonets/graft', 'mcp'] };
 const BIN_LAUNCH = { command: 'graft', args: ['mcp'] };
 
-function graftOnPath(): boolean {
-  const r = spawnSync('graft', ['--version'], { stdio: 'ignore', timeout: 5000 });
-  return r.status === 0;
+/** Injectable environment for launcher detection, so tests never touch the real machine. */
+export interface LauncherDeps {
+  platform: NodeJS.Platform;
+  env: Record<string, string | undefined>;
+  spawn: (cmd: string, args: string[], opts: SpawnSyncOptions) => { status: number | null };
+  exists: (p: string) => boolean;
+}
+
+const defaultDeps = (): LauncherDeps => ({
+  platform: process.platform,
+  env: process.env,
+  spawn: (cmd, args, opts) => spawnSync(cmd, args, opts),
+  exists: (p) => existsSync(p),
+});
+
+/** Characters that could break out of the quoted cmd.exe command string. */
+const UNSAFE_CMD_CHARS = /["&|^%<>!\r\n]/;
+
+/**
+ * Windows: npm installs `graft` as an extensionless script plus `graft.cmd`/`.ps1`,
+ * none of which `spawnSync('graft')` can start without a shell. Resolve the launcher
+ * by scanning PATH x PATHEXT in-process, then run `--version` on that absolute path.
+ * `.cmd`/`.bat` need cmd.exe; its command string is built only from the resolved
+ * path (unsafe characters rejected) and the constant `--version`.
+ */
+function windowsGraftUsable(deps: LauncherDeps): boolean {
+  const pathVar = deps.env.PATH ?? deps.env.Path ?? '';
+  const exts = (deps.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .map((e) => e.trim())
+    .filter(Boolean);
+  for (const dir of pathVar.split(';')) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const candidate = join(dir.replace(/^"|"$/g, ''), `graft${ext.toLowerCase()}`);
+      if (!deps.exists(candidate)) continue;
+      if (UNSAFE_CMD_CHARS.test(candidate)) return false;
+      const lower = candidate.toLowerCase();
+      if (lower.endsWith('.exe') || lower.endsWith('.com')) {
+        return deps.spawn(candidate, ['--version'], { stdio: 'ignore', timeout: 5000, windowsHide: true }).status === 0;
+      }
+      if (!lower.endsWith('.cmd') && !lower.endsWith('.bat')) continue;
+      const r = deps.spawn(
+        deps.env.ComSpec || 'cmd.exe',
+        ['/d', '/s', '/c', `"${candidate}" --version`],
+        { stdio: 'ignore', timeout: 5000, windowsHide: true, windowsVerbatimArguments: true },
+      );
+      return r.status === 0;
+    }
+  }
+  return false;
+}
+
+function graftOnPath(deps: LauncherDeps = defaultDeps()): boolean {
+  if (deps.platform === 'win32') return windowsGraftUsable(deps);
+  return deps.spawn('graft', ['--version'], { stdio: 'ignore', timeout: 5000 }).status === 0;
+}
+
+/**
+ * Pick the launcher. Precedence: `GRAFT_MCP_NPX` truthy (forces npx), then
+ * `GRAFT_MCP_LAUNCHER=graft|npx` (deterministic override; other values ignored),
+ * then `onPath` if given, then probing for an installed `graft`.
+ * Exported with injectable deps for tests.
+ */
+export function detectGraftLauncher(
+  deps: Partial<LauncherDeps> = {},
+  onPath?: boolean,
+): { command: string; args: string[] } {
+  const d = { ...defaultDeps(), ...deps };
+  const forced = d.env.GRAFT_MCP_NPX;
+  if (forced !== undefined && forced !== '' && forced !== '0' && forced !== 'false') return NPX_LAUNCH;
+  const override = d.env.GRAFT_MCP_LAUNCHER;
+  if (override === 'graft') return BIN_LAUNCH;
+  if (override === 'npx') return NPX_LAUNCH;
+  return (onPath ?? graftOnPath(d)) ? BIN_LAUNCH : NPX_LAUNCH;
 }
 
 /**
@@ -57,12 +129,11 @@ function graftOnPath(): boolean {
  * `GRAFT_MCP_NPX=1` forces the `npx` form — the escape hatch for a machine whose
  * global install is stale or shadowed, and what the tests set so their expectations
  * don't depend on whether the machine running them happens to have graft installed.
- * `opts.onPath` is the same override for direct unit tests of both branches.
+ * `GRAFT_MCP_LAUNCHER=graft|npx` is a deterministic override (GRAFT_MCP_NPX still
+ * wins). `opts.onPath` is the same override for direct unit tests of both branches.
  */
 export function serverEntry(opts: { onPath?: boolean } = {}): { command: string; args: string[] } {
-  const forced = process.env.GRAFT_MCP_NPX;
-  if (forced !== undefined && forced !== '' && forced !== '0' && forced !== 'false') return NPX_LAUNCH;
-  return (opts.onPath ?? graftOnPath()) ? BIN_LAUNCH : NPX_LAUNCH;
+  return detectGraftLauncher({}, opts.onPath);
 }
 
 

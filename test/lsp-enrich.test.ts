@@ -6,16 +6,20 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pickServer, LSP_SERVERS } from "../src/graph/lsp/registry.js";
-import { enrichWithLsp } from "../src/graph/lsp/enrich.js";
+import { pickServers, LSP_SERVERS, parseTypeScriptMajor } from "../src/graph/lsp/registry.js";
+import { enrichWithLsp, readinessSample } from "../src/graph/lsp/enrich.js";
 import type { GraphV1 } from "../src/graph/types.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { patchBuildConfig, readLspEnabled } from "../src/util/state.js";
 
-test("pickServer: no languages present → no server", () => {
-  assert.equal(pickServer(new Set()), null);
+test("pickServers: no languages present → no servers", () => {
+  assert.deepEqual(pickServers(new Set()), []);
 });
 
-test("pickServer: a language no registered server covers → null", () => {
-  assert.equal(pickServer(new Set(["cobol", "fortran"])), null);
+test("pickServers: languages no registered server covers → no servers", () => {
+  assert.deepEqual(pickServers(new Set(["cobol", "fortran"])), []);
 });
 
 test("registry rows are well-formed (languages, command, languageId)", () => {
@@ -38,7 +42,37 @@ test("enrichWithLsp is a no-op when no server matches the repo's languages", asy
   };
   const before = graph.edges.length;
   const r = await enrichWithLsp(graph, "/tmp/does-not-matter");
-  assert.equal(r.server, null, "no server selected for an unsupported language");
+  assert.deepEqual(r.servers, [], "no server selected for an unsupported language");
   assert.equal(r.added, 0);
   assert.equal(graph.edges.length, before, "graph edges untouched");
+});
+
+
+test("parseTypeScriptMajor recognizes classic and native TypeScript versions", () => {
+  assert.equal(parseTypeScriptMajor("Version 7.0.2"), 7);
+  assert.equal(parseTypeScriptMajor("6.0.3"), 6);
+  assert.equal(parseTypeScriptMajor("not-a-version"), null);
+});
+
+
+test("readinessSample spreads probes across files and deduplicates paths", () => {
+  const items = Array.from({ length: 20 }, (_, i) => ({ path: `src/file-${i}.ts`, i }));
+  assert.deepEqual(readinessSample(items).map((item) => item.i), [0, 4, 9, 14, 18]);
+
+  const repeated = [
+    { path: "a.ts", i: 0 },
+    { path: "a.ts", i: 1 },
+    { path: "b.ts", i: 2 },
+    { path: "b.ts", i: 3 },
+    { path: "c.ts", i: 4 },
+  ];
+  assert.deepEqual(readinessSample(repeated).map((item) => item.path), ["a.ts", "b.ts"]);
+});
+
+
+test("LSP build preference is persisted per repository", () => {
+  const dir = mkdtempSync(join(tmpdir(), "graft-lsp-pref-"));
+  assert.equal(readLspEnabled(dir), false);
+  patchBuildConfig(dir, { lsp: true });
+  assert.equal(readLspEnabled(dir), true);
 });

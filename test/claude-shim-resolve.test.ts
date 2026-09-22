@@ -71,7 +71,7 @@ function isolate(root: string): { preload: string; env: NodeJS.ProcessEnv } {
 function runShim(root: string, bakedDir: string, projectDir: string): string | null {
   const shimPath = join(root, 'graft-hooks.cjs');
   const marker = join(root, 'loaded.txt');
-  writeFileSync(shimPath, hooksShim(bakedDir));
+  writeFileSync(shimPath, hooksShim(bakedDir, { tmpdir: join(root, 'no-such-tmp') })); // fixtures live under the real tmpdir
   const { preload, env } = isolate(root);
   const res = spawnSync(process.execPath, ['--require', preload, shimPath, 'session-start'], {
     encoding: 'utf8',

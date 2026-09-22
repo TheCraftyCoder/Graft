@@ -14,7 +14,7 @@ import { ensureFreshChildren, ensureFreshGraph, refreshNote } from "../src/graph
 import { extractCachePath } from "../src/graph/extract-cache.js";
 import { fingerprintPath, isClean, probeDrift } from "../src/graph/fingerprint.js";
 import { readGraph, wiringPath } from "../src/graph/write.js";
-import { acquireLock, readStats, releaseLock, writeStats, emptyStats } from "../src/util/state.js";
+import { acquireLock, patchBuildConfig, readLspEnabled, readStats, releaseLock, writeStats, emptyStats } from "../src/util/state.js";
 import { callTool } from "../src/mcp/tools.js";
 import type { GraphV1 } from "../src/graph/types.js";
 import { chmodDenialUnavailable } from "./helpers.js";
@@ -479,4 +479,23 @@ test("a process killed while holding the lock releases it", async (t) => {
   assert.ok(!existsSync(lock), "the lock must not outlive the process that took it");
   assert.equal(signal, "SIGTERM", "and the exit still reports the signal, for whoever is waiting on us");
   assert.equal(code, null);
+});
+
+
+test("persisted LSP preference survives config reads", () => {
+  const d = repo();
+  assert.equal(readLspEnabled(d), false);
+  patchBuildConfig(d, { lsp: true });
+  assert.equal(readLspEnabled(d), true);
+});
+
+test("automatic refresh preserves a repo's persisted LSP preference", async () => {
+  const d = repo();
+  patchBuildConfig(d, { lsp: true });
+  await buildGraph(d);
+  writeFileSync(join(d, "src", "math.ts"), `${MATH}${MUL}`);
+
+  const r = await ensureFreshGraph(d);
+  assert.equal(r.refreshed, true);
+  assert.equal(readLspEnabled(d), true, "refresh must not discard the persisted preference");
 });

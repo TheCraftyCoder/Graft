@@ -15,8 +15,10 @@ import { mcpTargets } from './mcp-config.js';
 import { hookTargets } from './codex-hooks.js';
 import { cursorHookTargets } from './cursor-hooks.js';
 import { antigravitySkillTargets } from './antigravity.js';
+import { hostSkillTargets } from './host-skills.js';
 import { claudeTargets } from '../claude/init.js';
 import { claudeGlobalTargets } from './claude-global.js';
+import { planRetract, changed, type Retraction } from './retract.js';
 
 /** Where a write lands. 'global' = outside the repo, affects every project. */
 export type WriteScope = 'repo' | 'global';
@@ -71,9 +73,9 @@ export function planInit(repo: string, opts: { home?: string; ids?: string[] } =
   const detected = new Set(detectHosts(probe).map((h) => h.id));
 
   const plans: HostPlan[] = [
-    // Repo writes plus the user-level copy under `~/.claude` — the picker and
-    // `--dry-run` render 'global' writes in their own section, so a user sees
-    // what lands outside the repo before agreeing to it.
+    // Repo writes plus the user-level MCP fallback/settings cleanup — the picker and
+    // `--dry-run` render global writes separately so the user sees what lands
+    // outside the repo before agreeing to it.
     { id: 'claude', name: 'Claude Code', detected: true, writes: [...claudeTargets(repo), ...claudeGlobalTargets(home)] },
     ...HOSTS.map((host) => ({
       id: host.id,
@@ -82,6 +84,7 @@ export function planInit(repo: string, opts: { home?: string; ids?: string[] } =
       writes: [
         instructionTarget(repo, host),
         ...mcpTargets(repo, [host.id], { home }),
+        ...hostSkillTargets(repo, [host.id], { home }),
         ...(host.id === 'agents' ? hookTargets(home) : []),
         ...(host.id === 'cursor' ? cursorHookTargets(repo) : []),
         ...(host.id === 'antigravity' ? antigravitySkillTargets(home) : []),
@@ -95,4 +98,54 @@ export function planInit(repo: string, opts: { home?: string; ids?: string[] } =
 /** Flatten a plan down to the writes for the selected host ids. */
 export function selectedWrites(plan: HostPlan[], ids: string[]): PlannedWrite[] {
   return plan.filter((p) => ids.includes(p.id)).flatMap((p) => p.writes);
+}
+
+/** The flags that decide which planned writes a real graft init performs. */
+export interface OperationOpts {
+  home?: string;
+  mcp?: boolean;
+  hooks?: boolean;
+  global?: boolean;
+  statusline?: boolean;
+  preserve?: boolean;
+}
+
+/**
+ * Whether the real run performs this write under the flags. The one filter
+ * runHostsInit and planOperations share, so they cannot drift.
+ * Claude Code's own layer (runInit) honours only global: it writes its
+ * .mcp.json and settings hook blocks regardless of --no-mcp / --no-hooks, and it
+ * writes the statusline shim and settings.json even under --no-statusline (the
+ * flag only changes what the settings block contains).
+ */
+export function writeAllowed(
+  w: Pick<PlannedWrite, 'hostId' | 'kind' | 'scope'>,
+  opts: Pick<OperationOpts, 'mcp' | 'hooks' | 'global'>,
+): boolean {
+  if (opts.global === false && w.scope === 'global') return false;
+  if (w.hostId === 'claude') return true;
+  if (opts.mcp === false && w.kind === 'mcp') return false;
+  if (opts.hooks === false && w.kind === 'hook') return false;
+  return true;
+}
+
+export interface PlannedOperations {
+  writes: PlannedWrite[];
+  retractions: Retraction[];
+}
+
+/**
+ * Everything a real graft init for ids would change under these flags:
+ * the writes, and the unselected-host retractions (none under --preserve).
+ * Pure — touches nothing.
+ */
+export function planOperations(repo: string, ids: string[], opts: OperationOpts = {}): PlannedOperations {
+  const home = opts.home ?? homedir();
+  const writes = selectedWrites(planInit(repo, { home }), ids).filter((w) => writeAllowed(w, opts));
+  const retractions = opts.preserve
+    ? []
+    : changed(planRetract(repo, { home, exclude: ids, global: opts.global, cache: false })).filter(
+        (r) => r.action !== 'skipped-unparseable',
+      );
+  return { writes, retractions };
 }

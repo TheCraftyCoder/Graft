@@ -1,3 +1,11 @@
+# Telemetry disabled in this fork
+
+This fork does **not** record or send anonymous usage metrics. The telemetry ingestion key is compiled out, runtime key overrides are ignored, and the send path is a no-op. `graft telemetry enable` cannot re-enable it.
+
+The material below is retained only as documentation of the upstream telemetry design and old queue format.
+
+---
+
 # Telemetry
 
 graft collects a small set of **anonymous** usage events so we can tell whether

@@ -43,7 +43,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'graft_find_code',
     description:
-      'Query the repo context graph in plain words. Returns ranked nodes with exact file:line spans and the relevant source inlined — usually the full answer, no file reads needed.',
+      'Query the repo context graph in plain words. Returns ranked nodes with exact file:line spans and the relevant source inlined. Ranked navigation context for unfamiliar code, not exhaustive or authoritative — read the source before editing.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -64,7 +64,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'graft_file_api',
     description:
-      "Signatures-only view of one file — every definition's signature + line span, ~10× cheaper than reading the file ($0, no LLM).",
+      "Signatures-only view of one file — every definition's signature + line span — a compact API view of the file ($0, no LLM).",
     inputSchema: {
       type: 'object',
       properties: {
@@ -81,7 +81,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'graft_trace_calls',
     description:
-      'Structural edges for a symbol, over call/reference/import/implements/extends ($0, no LLM). Defaults to direct callers (who depends on it). Set direction:"out" for callees (what it calls); set depth>1 (or depth:"all" for the full closure) to walk transitively for the full blast radius — every source that breaks if it changes. Run before a multi-file refactor to find ALL affected files.',
+      'Structural edges for a symbol, over call/reference/import/implements/extends ($0, no LLM). Defaults to direct callers (who depends on it). Set direction:"out" for callees (what it calls); set depth>1 (or depth:"all" for the full closure) to walk transitively for the full blast radius — the likely blast radius (some edges are inferred). Useful before a multi-file refactor; confirm critical references with rg, LSP, or the compiler.',
     inputSchema: {
       type: 'object',
       properties: {

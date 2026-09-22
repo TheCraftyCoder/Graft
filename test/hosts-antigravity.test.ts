@@ -23,8 +23,8 @@ test("Antigravity detects on its own markers, not bare ~/.gemini", () => {
   const ids = (dirs: string[]) => detectHosts(probe(home, repo, dirs)).map((h) => h.id);
   // Antigravity's global config dir → antigravity (Gemini CLI needs bare ~/.gemini)
   assert.ok(ids([join('.gemini', 'config')]).includes('antigravity'), 'config dir → antigravity');
-  // a workspace .agents dir → antigravity
-  assert.ok(ids(['.agents']).includes('antigravity'), '.agents → antigravity');
+  // .agents is a cross-agent skill standard, not proof Antigravity is installed.
+  assert.ok(!ids(['.agents']).includes('antigravity'), 'generic .agents does not imply Antigravity');
   // bare ~/.gemini alone is Gemini CLI, NOT Antigravity
   const bare = ids(['.gemini']);
   assert.ok(bare.includes('gemini') && !bare.includes('antigravity'), 'bare ~/.gemini is gemini only');
@@ -57,11 +57,11 @@ test("runHostsInit --agents antigravity writes AGENTS.md + MCP + skill", () => {
   mkdirSync(join(home, '.gemini', 'config'), { recursive: true });
   const r = runHostsInit(repo, { agents: ['antigravity'], home });
   assert.deepEqual(r.written.map((w) => w.id), ['antigravity']);
-  assert.ok(readFileSync(join(repo, 'AGENTS.md'), 'utf8').includes('graft ask'), 'AGENTS.md written');
+  assert.ok(readFileSync(join(repo, 'AGENTS.md'), 'utf8').includes('on-demand `graft` skill'), 'tiny AGENTS pointer written');
   assert.ok(r.mcp.some((w) => w.path.endsWith(join('.gemini', 'config', 'mcp_config.json'))), 'MCP registered');
-  assert.ok(r.hooks.some((w) => w.path.endsWith(join('skills', 'graft', 'SKILL.md'))), 'skill placed');
+  assert.ok(r.skills.some((w) => w.path.endsWith(join('skills', 'graft', 'SKILL.md'))), 'skill placed');
   // --no-global suppresses the two global writes (MCP + skill), keeps AGENTS.md
   const noGlobal = runHostsInit(fresh(), { agents: ['antigravity'], home: fresh(), global: false });
   assert.equal(noGlobal.mcp.length, 0, 'no MCP write under --no-global');
-  assert.equal(noGlobal.hooks.length, 0, 'no skill write under --no-global');
+  assert.equal(noGlobal.skills.length, 0, 'no skill write under --no-global');
 });

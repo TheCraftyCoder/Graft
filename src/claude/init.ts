@@ -92,11 +92,10 @@ export function runInit(
   // other hosts use (existing servers preserved; unparseable files skipped).
   const mcp = mergeJsonKey('claude', mcpTarget, 'mcpServers', serverEntry());
 
-  // The same wiring again, one level up in `~/.claude`, because everything above
-  // this line can be erased by a `.gitignore` and lost to `git worktree add`. See
-  // hosts/claude-global.ts for the failure that motivates it. Gated on the same
-  // flag `registerMcpConfigs` uses, so `--no-global` still means "nothing outside
-  // this repo".
+  // Keep only the user-scope MCP fallback outside the repo, and clean legacy
+  // global Graft hooks from older installs. This survives `.gitignore`/worktrees
+  // without injecting hooks into every Claude session. `--no-global` still means
+  // "nothing outside this repo".
   const global = opts.global === false ? [] : installClaudeGlobal(opts.home ?? homedir());
 
   const built = buildGraphIfMissing(dir, opts);
