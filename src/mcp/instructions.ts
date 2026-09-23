@@ -27,6 +27,7 @@
 /** Tool names in the order an agent should reach for them, most-used first. */
 const TOOL_ORDER = [
   'graft_find_code',
+  'graft_search',
   'graft_find_all',
   'graft_trace_calls',
   'graft_file_api',
@@ -40,17 +41,18 @@ export function toolSearchQuery(prefix = 'mcp__graft__'): string {
 
 export function mcpInstructions(): string {
   return [
-    'Graft is a structural repository map. Use it selectively: unfamiliar architecture, exhaustive indexed search, callers/blast radius, a file\'s compact API, repo orientation.',
+    'Graft is a structural repository map. Use it selectively: unfamiliar architecture, callers/blast radius, a file\'s compact API, repo orientation.',
     'For a known file, symbol, literal, RPC id, type, or store, go straight to source, rg, or LSP.',
     '',
-    `**If these tools are deferred (schemas withheld), load them all in ONE lookup:** ToolSearch "${toolSearchQuery()}" — one round trip, never one at a time.`,
+    `**If these tools are deferred, load them all in ONE lookup:** ToolSearch "${toolSearchQuery()}".`,
     '',
     '- graft_find_code — unfamiliar "how does X work": ranked hits.',
+    '- graft_search — conceptual "how does X work" when semantic recall helps (fuses find_code with local ColGREP).',
     '- graft_find_all — every indexed occurrence; find_code is top-N.',
     '- graft_trace_calls — callers, callees, blast radius.',
     '- graft_file_api — signatures and spans for one file.',
-    '- graft_repo_map — orientation in an unfamiliar repo.',
+    '- graft_repo_map — repo orientation.',
     '',
-    'Graft is navigation evidence, not authoritative truth: read source before editing. Results reflect current edits (the graph refreshes before each query).',
+    'Graft is navigation evidence, not authoritative truth: read source before editing. The graph refreshes before each query.',
   ].join('\n');
 }

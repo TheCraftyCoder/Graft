@@ -19,6 +19,7 @@ import { maybeFlushInBackground, track } from '../telemetry/index.js';
  */
 const TOOL_COMMAND: Record<string, string> = {
   graft_find_code: 'ask',
+  graft_search: 'search',
   graft_find_all: 'grep',
   graft_trace_calls: 'callers',
   graft_file_api: 'skeleton',

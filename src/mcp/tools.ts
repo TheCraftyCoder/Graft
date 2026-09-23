@@ -62,6 +62,30 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'graft_search',
+    description:
+      "Hybrid search: fuses the lexical/graph `ask` ranking with local ColGREP hits (hybrid semantic + keyword by default) mapped onto graph symbols. Use for conceptual 'how does X work' questions; falls back to `ask` when ColGREP is absent. Results are navigation leads with provenance, never proof.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'what you want to understand, in plain words' },
+        limit: { type: 'number', description: 'max fused results (default 10)' },
+        in: {
+          type: 'string',
+          description: 'narrow to nodes under this path prefix, filtered before scoring (segment-aware, like scopeOf)',
+        },
+        includeTests: { type: 'boolean', description: 'keep test/spec/e2e paths (dropped by default)' },
+        colgrepMode: {
+          type: 'string',
+          enum: ['hybrid', 'semantic', 'off'],
+          description:
+            "colgrep retrieval mode: 'hybrid' (default, colgrep's own semantic+keyword blend), 'semantic' (--semantic-only), or 'off' (ask-only, skip colgrep entirely)",
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
     name: 'graft_file_api',
     description:
       "Signatures-only view of one file — every definition's signature + line span — a compact API view of the file ($0, no LLM).",
@@ -193,6 +217,15 @@ async function callWorkspaceTool(
       const { text } = await federateCheck(root, dirOverride);
       return { text, isError: false };
     }
+    case 'graft_search':
+      // Fusing `ask`'s ranking with ColGREP hits across several child graphs
+      // (each with its own scope/prefix semantics) isn't implemented — rather
+      // than silently answering from one arbitrary child (or the parent root,
+      // which has no graph of its own), fail loudly with a next-step pointer.
+      return {
+        text: 'graft_search does not federate across workspace children yet; run it from a child repository or use graft_find_code',
+        isError: true,
+      };
     default:
       return null;
   }
@@ -259,6 +292,27 @@ async function callSingleTool(
         const inArg = typeof args.in === 'string' && args.in ? args.in : undefined;
         const r = engine.ask(root, query, { limit, source: true, full: args.full === true, in: inArg });
         return { text: formatAsk(r), isError: false };
+      }
+      case 'graft_search': {
+        const query = String(args.query ?? '');
+        if (!query) return { text: 'graft_search requires a query', isError: true };
+        const limit = typeof args.limit === 'number' ? args.limit : 10;
+        const inArg = typeof args.in === 'string' && args.in ? args.in : undefined;
+        const includeTests = args.includeTests === true;
+        if (
+          args.colgrepMode !== undefined &&
+          args.colgrepMode !== 'hybrid' &&
+          args.colgrepMode !== 'semantic' &&
+          args.colgrepMode !== 'off'
+        ) {
+          throw new Error(`invalid colgrepMode "${String(args.colgrepMode)}"; expected hybrid | semantic | off`);
+        }
+        const colgrepMode =
+          args.colgrepMode === 'semantic' || args.colgrepMode === 'off' ? args.colgrepMode : undefined;
+        const { search } = await import('../search/search.js');
+        const { renderSearch } = await import('../search/hybrid.js');
+        const r = await search(root, query, { limit, in: inArg, includeTests, colgrepMode, contextDir: dirOverride });
+        return { text: renderSearch(r.results, { note: r.note }), isError: false };
       }
       case 'graft_file_api': {
         const file = String(args.file ?? '');
