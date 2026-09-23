@@ -72,9 +72,10 @@ function multiDirRepo(): string {
   return d;
 }
 
-test('TOOLS lists the six tools with schemas', async () => {
+test('TOOLS lists the tools with schemas', async () => {
   assert.deepEqual(TOOLS.map((t) => t.name), [
     'graft_find_code',
+    'graft_search',
     'graft_file_api',
     'graft_check_freshness',
     'graft_trace_calls',
@@ -91,6 +92,18 @@ test('TOOLS lists the six tools with schemas', async () => {
   const props = (callers.inputSchema as { properties: Record<string, unknown> }).properties;
   assert.ok('direction' in props, 'graft_trace_calls schema should document `direction`');
   assert.ok('depth' in props, 'graft_trace_calls schema should document `depth`');
+
+  // graft_search's colgrepMode must be documented for a host to offer it.
+  const searchTool = TOOLS.find((t) => t.name === 'graft_search')!;
+  const searchProps = (searchTool.inputSchema as { properties: Record<string, unknown> }).properties;
+  assert.ok('colgrepMode' in searchProps, 'graft_search schema should document `colgrepMode`');
+});
+
+test('graft_search: colgrepMode "off" skips ColGREP entirely and never claims colgrep/both provenance', async () => {
+  const d = builtRepo();
+  const r = await callTool(d, 'graft_search', { query: 'add', colgrepMode: 'off' });
+  assert.equal(r.isError, false);
+  assert.doesNotMatch(r.text, /\[colgrep\]|\[both\]/);
 });
 
 test('graft_find_code returns ranked hits for a built repo', async () => {
@@ -290,6 +303,41 @@ test('callTool honors a dirOverride for a graph built in a non-default dir', asy
   assert.match(noOverride.text, /graft build/);
 });
 
+test('graft_search honors a dirOverride for a graph built in a non-default dir', async () => {
+  const { repo, graphDir } = customDirRepo();
+
+  const withOverride = await callTool(repo, 'graft_search', { query: 'add' }, graphDir);
+  assert.equal(withOverride.isError, false);
+  assert.match(withOverride.text, /src\/math\.ts/);
+
+  // Without the override, `graft_search` must not silently answer from the
+  // wrong (non-existent, default) graph dir — it must fail loudly instead of
+  // quietly returning empty.
+  const noOverride = await callTool(repo, 'graft_search', { query: 'add' });
+  assert.equal(noOverride.isError, true);
+  assert.match(noOverride.text, /no graph found — run `graft build` first/);
+});
+
+test('graft_search: an invalid colgrepMode returns isError:true naming the valid values, never a silent hybrid run', async () => {
+  const d = builtRepo();
+  const r = await callTool(d, 'graft_search', { query: 'add', colgrepMode: 'sematic' });
+  assert.equal(r.isError, true);
+  assert.match(r.text, /hybrid/);
+  assert.match(r.text, /semantic/);
+  assert.match(r.text, /off/);
+});
+
+test('graft_search under a workspace root returns a clear, non-crashing federation error instead of running unscoped', async () => {
+  const parent = mkdtempSync(join(tmpdir(), 'graft-mcptools-ws-'));
+  mkdirSync(join(parent, 'graft'), { recursive: true });
+  writeFileSync(join(parent, 'graft', 'workspace.json'), JSON.stringify({ version: 1, children: [] }));
+
+  const r = await callTool(parent, 'graft_search', { query: 'add' });
+  assert.equal(r.isError, true);
+  assert.match(r.text, /graft_search does not federate across workspace children yet/);
+  assert.match(r.text, /graft_find_code/);
+});
+
 test('graft_file_api returns signatures for a file, errors on unknown file', async () => {
   const d = builtRepo();
   const r = await callTool(d, 'graft_file_api', { file: 'src/math.ts' });
@@ -313,8 +361,8 @@ const RENAMES: Record<string, string> = {
   graft_check: 'graft_check_freshness',
 };
 
-test('TOOLS advertises exactly the six new names — the roster does not grow', () => {
-  assert.deepEqual([...TOOLS.map((t) => t.name)].sort(), Object.values(RENAMES).sort());
+test('TOOLS advertises exactly the six renamed names plus graft_search — the roster does not grow beyond a deliberate addition', () => {
+  assert.deepEqual([...TOOLS.map((t) => t.name)].sort(), [...Object.values(RENAMES), 'graft_search'].sort());
 });
 
 test('every old tool name still resolves to its replacement', () => {

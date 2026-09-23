@@ -8,6 +8,7 @@ import { once } from 'node:events';
 import { buildGraph } from '../src/graph/build.js';
 import { mcpInstructions, toolSearchQuery } from '../src/mcp/instructions.js';
 import { TOOLS } from '../src/mcp/tools.js';
+import { GRAFT_MCP_TOOL_CANONICAL } from '../src/mcp/tool-names.js';
 
 async function rpc(messages: object[], dir: string, expected: number): Promise<any[]> {
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'mcp', dir], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -63,6 +64,7 @@ test('initialize → tools/list → tools/call round-trip', async () => {
 
 const ALL_TOOLS = [
   'graft_find_code',
+  'graft_search',
   'graft_file_api',
   'graft_check_freshness',
   'graft_trace_calls',
@@ -142,7 +144,7 @@ test('initialize carries instructions — the layer that survives tool deferral'
   // else, so this string has to carry both the pitch and the recovery instruction.
   assert.match(instructions, /ONE lookup/, 'tells the agent to batch the schema fetch');
   assert.match(instructions, /select:mcp__graft__graft_find_code,/, 'gives a copy-pasteable query');
-  for (const t of ['graft_find_code', 'graft_find_all', 'graft_trace_calls', 'graft_file_api', 'graft_repo_map']) {
+  for (const t of ['graft_find_code', 'graft_search', 'graft_find_all', 'graft_trace_calls', 'graft_file_api', 'graft_repo_map']) {
     assert.ok(instructions.includes(t), `names ${t}`);
   }
   // Observed sibling servers sit at 660–984 chars; nothing proves a longer one
@@ -179,13 +181,13 @@ test('MCP steering is selective, not graft-first, and makes no savings claims', 
   const query = toolSearchQuery();
   assert.match(instructions, /ONE lookup/);
   assert.ok(instructions.includes(`ToolSearch "${query}"`));
-  for (const t of ['graft_find_code', 'graft_find_all', 'graft_trace_calls', 'graft_file_api', 'graft_repo_map']) {
+  for (const t of ['graft_find_code', 'graft_search', 'graft_find_all', 'graft_trace_calls', 'graft_file_api', 'graft_repo_map']) {
     assert.ok(query.includes(`mcp__graft__${t}`), `query loads ${t}`);
   }
 
   // Tool descriptions never claim source verification is unnecessary or advertise savings.
   const byName = new Map(TOOLS.map((t) => [t.name, t.description]));
-  assert.equal(byName.size, 6);
+  assert.equal(byName.size, 7);
   for (const [name, d] of byName) {
     assert.doesNotMatch(d, /no file reads needed|usually the full answer|cheaper than reading|no need to (read|verify)/i, name);
     assert.doesNotMatch(d, /find ALL affected files/, name);
@@ -193,6 +195,16 @@ test('MCP steering is selective, not graft-first, and makes no savings claims', 
   assert.match(byName.get('graft_find_code')!, /read the source before editing/);
   assert.match(byName.get('graft_file_api')!, /compact API view/);
   assert.match(byName.get('graft_file_api')!, /signature \+ line span/);
+});
+
+test('graft_search is in the canonical tool-name list a deferred-tools host and the session hooks read', () => {
+  assert.ok(GRAFT_MCP_TOOL_CANONICAL.includes('graft_search' as (typeof GRAFT_MCP_TOOL_CANONICAL)[number]), 'graft_search must be recognized by hooks and by any host that loads schemas from this list');
+});
+
+test('instructions steer graft_search: conceptual recall, not known-symbol lookup', () => {
+  const instructions = mcpInstructions();
+  assert.match(instructions, /graft_search.*ColGREP/, 'names graft_search and its ColGREP fusion');
+  assert.match(instructions, /conceptual "how does X work"/);
 });
 
 test('unknown method returns -32601', async () => {

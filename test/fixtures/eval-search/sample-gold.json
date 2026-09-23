@@ -1,0 +1,15 @@
+{
+  "queries": [
+    {
+      "id": "q1",
+      "query": "how does auth session expiry work",
+      "gold": ["src/auth/session.ts#checkExpiry"],
+      "partial": ["src/auth/session.ts"]
+    },
+    {
+      "id": "q2",
+      "query": "where is the retry loop for the http client",
+      "gold": ["src/net/client.ts"]
+    }
+  ]
+}

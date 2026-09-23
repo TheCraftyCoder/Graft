@@ -633,6 +633,62 @@ program
   });
 
 program
+  .command("search")
+  .description(
+    "Hybrid search: fuses `ask`'s lexical/graph ranking with local ColGREP hits (hybrid semantic + keyword by default) mapped onto graph symbols (opt-in — falls back to `ask` alone when ColGREP isn't installed)",
+  )
+  .argument("<query>", "what you want to understand, in plain words")
+  .argument(...DIR_ARG)
+  .option("-n, --limit <n>", "max fused results", "10")
+  .option("--in <path>", "narrow to nodes under this path prefix (both the ask and colgrep candidates)")
+  .option("--include-tests", "keep test/spec/e2e paths (dropped by default)")
+  .option("--json", "output the fused result as JSON, with semanticUsed and timingsMs")
+  .option("--k <n>", "reciprocal-rank-fusion k", "60")
+  .option("--colgrep-mode <mode>", "colgrep retrieval mode: hybrid (default, colgrep's own semantic+keyword blend) | semantic (--semantic-only) | off (ask-only, skip colgrep entirely)", "hybrid")
+  .option(...NO_REFRESH_FLAG)
+  .action(async (query: string, dirArg: string | undefined, opts: { limit: string; in?: string; includeTests?: boolean; json?: boolean; k: string; colgrepMode?: string; refresh?: boolean }) => {
+    const dir = noteQuery(queryRoot(dirArg));
+    await refreshBefore(dir, opts);
+    const searchGlobalDir = program.opts<GlobalOpts>().dir;
+    if (readWorkspace(dir, searchGlobalDir)) {
+      console.error(
+        "✗ graft search does not federate across workspace children yet; run it from a child repository or use `graft ask`",
+      );
+      process.exit(1);
+      return;
+    }
+    const { search } = await import("./search/search.js");
+    const { renderSearch } = await import("./search/hybrid.js");
+    const VALID_COLGREP_MODES = ["hybrid", "semantic", "off"] as const;
+    let r;
+    try {
+      if (opts.colgrepMode !== undefined && !(VALID_COLGREP_MODES as readonly string[]).includes(opts.colgrepMode)) {
+        throw new Error(`invalid --colgrep-mode "${opts.colgrepMode}"; expected hybrid | semantic | off`);
+      }
+      r = await search(dir, query, {
+        limit: Number(opts.limit),
+        in: opts.in,
+        includeTests: opts.includeTests,
+        json: opts.json,
+        k: Number(opts.k),
+        colgrepMode: opts.colgrepMode as "hybrid" | "semantic" | "off" | undefined,
+        contextDir: searchGlobalDir,
+      });
+    } catch (err) {
+      console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+      return;
+    }
+    noteHit(r.results.length > 0);
+    if (opts.json) {
+      console.log(JSON.stringify({ results: r.results, note: r.note, semanticUsed: r.semanticUsed, timingsMs: r.timingsMs }));
+    } else {
+      process.stdout.write(renderSearch(r.results, { note: r.note }));
+      process.stdout.write("\n");
+    }
+  });
+
+program
   .command("skeleton")
   .description("Signatures-only view of one file from the wiring graph — the cheapest way to see a file's API surface")
   .argument("<file>", "repo-relative path (or unique basename) of the file")

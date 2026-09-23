@@ -450,6 +450,58 @@ scripts/            2 files · 0 symbols
 hotspots: contextDirFor · function · src/context/node-file.ts:L100-L103 · 21←  wiringPath · function · src/graph/write.ts:L20-L22 · 14←  buildGraph · function · src/graph/build.ts:L104-L218 · 11←  ...
 ```
 
+## Semantic search (`graft search`)
+
+`graft search "<query>"` fuses `ask`'s lexical/graph ranking with local
+hits from [ColGREP](https://github.com/lightonai/next-plaid), mapped
+onto graph symbol nodes and reciprocal-rank-fused — this can improve
+recall on conceptual "how does X work" questions, still $0 and offline. Opt-in: install once with `cargo install colgrep` (or the LightOn
+installer) and run `colgrep init` once per repo to build its local index;
+`graft search` detects the binary itself, no config needed; if ColGREP isn't
+on PATH (or is a wrapper script), set `GRAFT_COLGREP_BIN` to the executable
+to spawn instead (and `GRAFT_COLGREP_ARGS_PREFIX`, a JSON array, for any argv
+entries it needs before ColGREP's own flags). ColGREP's own default is
+itself hybrid (semantic + keyword together); `--colgrep-mode semantic` asks
+it for `--semantic-only` instead, and `--colgrep-mode off` skips ColGREP
+entirely (ask-only). `hybrid` is the default; run the evaluation harness
+below with each mode to see which works best on your repository.
+
+```
+graft search "how does auth session expiry work"
+```
+
+Without ColGREP on PATH, `graft search` falls back to `ask` alone and prints
+one note line saying so — it never fails or blocks on the binary being
+absent. Each result line ends with a provenance tag: `lexical` (BM25/name
+match), `graph` (structural edge walk), `colgrep` (ColGREP only), `same-file`
+(a ColGREP whole-file hit re-keyed onto `ask`'s own symbol for that file —
+real signal, but not node-level agreement), or `both` (agreement between the
+two retrieval systems — `ask` and ColGREP independently landed on the same
+node, the strongest signal fusion has) — a hint at how a hit was found, never
+proof it's correct; read the source before editing either way.
+
+`--limit`, `--in <prefix>`, `--include-tests`, `--json`, `--k <n>` (RRF
+constant, default 60), and `--colgrep-mode <hybrid|semantic|off>` (default
+`hybrid`) match `ask`'s own flags where they overlap. `ask` itself,
+`graft_find_code`, and every other command are unchanged.
+
+### Evaluating on your repo
+
+`scripts/eval-search.mjs` scores `graft search` against a gold set you
+verify by hand:
+
+```
+node scripts/eval-search.mjs my-gold.json --dir /path/to/repo --limits 5,8
+```
+
+`my-gold.json` (or `.jsonl`) lists `{ id, query, gold, partial? }`, where
+`gold`/`partial` are repo-relative paths or `path#symbol`. Each query scores
+HIT (a `gold` path is in the top-N), PARTIAL (only `partial` is), or MISS,
+per `--limit`; output is a markdown table (rank, provenance, timing) plus
+totals, or `--json`. `--via cli` checks parity against the real CLI. Exit
+code is always 0 — a report, not a gate. Verify `gold` from source, never
+from the tool under test.
+
 ## Monorepos, submodules & multi-repo folders
 
 Graft supports these layouts:
