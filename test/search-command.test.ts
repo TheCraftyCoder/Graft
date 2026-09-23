@@ -12,6 +12,7 @@ import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { search } from "../src/search/search.js";
 import { writeGraph } from "../src/graph/write.js";
+import { buildGraph } from "../src/graph/build.js";
 import type { GraphV1, NodeV1 } from "../src/graph/types.js";
 
 function node(partial: Partial<NodeV1> & Pick<NodeV1, "id" | "path" | "span" | "kind" | "name">): NodeV1 {
@@ -187,6 +188,58 @@ test("search: fused path — semantic-only hit tagged 'semantic', shared hit tag
   const gamma = result.results.find((r) => r.path === "src/gamma.ts");
   assert.ok(gamma, "gamma should appear, matched by both ask and colgrep");
   assert.equal(gamma!.provenance, "both");
+});
+
+test("search: _ablation.graphRank reaches the internal ask() call and changes observable ordering", async () => {
+  // A real built graph (not the static writeGraph fixture above) with a
+  // same-word lexical collision between a graph-connected symbol
+  // (`fooHandler`, wired to two helpers) and an isolated one (`fooWidget`) —
+  // the same fixture shape `test/graphrank.test.ts` uses to prove `ask`'s
+  // own graphRank option. ColGREP is routed to `unresolvableEnv()` so
+  // `search()`'s result order here is exactly `ask`'s own order (tier 2
+  // alternation with an empty semantic list), making the ablation's effect
+  // on `ask` directly observable through `search()`.
+  const root = mkdtempSync(join(tmpdir(), "graft-search-cmd-graphrank-"));
+  writeFileSync(
+    join(root, "connected.ts"),
+    `export function fooHandler() {\n  helperAlpha();\n  helperBeta();\n}\n` +
+      `export function helperAlpha() { return 1; }\n` +
+      `export function helperBeta() { return 2; }\n`,
+  );
+  writeFileSync(join(root, "isolated.ts"), `export function fooWidget() { return 0; }\n`);
+  await buildGraph(root);
+
+  const env = unresolvableEnv();
+  const namesOf = async (ablation?: { graphRank: boolean }) => {
+    const result = await search(root, "foo", { limit: 10, env, ...(ablation ? { _ablation: ablation } : {}) });
+    return result.results.map((r) => r.name);
+  };
+
+  const defaultOrder = await namesOf();
+  const graphRankOnExplicit = await namesOf({ graphRank: true });
+  const graphRankOff = await namesOf({ graphRank: false });
+
+  assert.deepEqual(
+    graphRankOnExplicit,
+    defaultOrder,
+    "_ablation: { graphRank: true } reproduces the default (omitted _ablation) order exactly",
+  );
+
+  const iHandlerDefault = defaultOrder.indexOf("fooHandler");
+  const iWidgetDefault = defaultOrder.indexOf("fooWidget");
+  assert.ok(iHandlerDefault >= 0 && iWidgetDefault >= 0, "both same-word hits present by default");
+  assert.ok(
+    iHandlerDefault < iWidgetDefault,
+    "graphRank on (default) ranks the graph-connected hit above the isolated one",
+  );
+
+  const iHandlerOff = graphRankOff.indexOf("fooHandler");
+  const iWidgetOff = graphRankOff.indexOf("fooWidget");
+  assert.ok(iHandlerOff >= 0 && iWidgetOff >= 0, "both same-word hits present with graphRank off too");
+  assert.ok(
+    iHandlerOff >= iWidgetOff,
+    "_ablation: { graphRank: false } removes the connectivity advantage, matching pure lexical order",
+  );
 });
 
 test("search: a concept hit whose first source is a test file maps to its first non-test source instead", async () => {
