@@ -357,6 +357,38 @@ export function rrfFuse(
   return result;
 }
 
+/** Internal-only ablation switches for measuring `fuseSearch`/`ask` design
+ * choices against alternatives (see `scripts/eval-search.mjs`). Never exposed
+ * on the CLI or MCP surface — `@internal`. Every field's default reproduces
+ * exactly today's behavior, so an omitted `_ablation` (or an explicitly
+ * empty `{}`) is byte-identical to code with no `_ablation` concept at all. */
+export interface SearchAblation {
+  /** How a colgrep FILE candidate that re-keys onto an ask SYMBOL hit for the
+   * same path is placed. `"tier1b"` (default): current behavior — the
+   * re-keyed node is tagged `same-file` and ranked in tier 1b, above tier 2.
+   * `"tier2"`: it keeps provenance `same-file` but is NOT placed in tier 1b;
+   * instead it joins the ask-only list at its own ask rank (subject to
+   * `askOnlyRankCap` exactly like any other ask-only node) and takes part in
+   * normal tier-2 alternation. `"off"`: the file→symbol re-key never
+   * happens at all — colgrep file candidates stay file nodes, and provenance
+   * follows the normal rules (`both` only when `ask` independently returned
+   * that same file node; `survivorWasReKeyed` is then always false). */
+  sameFile?: "tier1b" | "tier2" | "off";
+  /** `"tiered"` (default): the union-preserving tier 1 / tier 1b / tier-2
+   * alternation order `fuseSearch` normally renders. `"rrf"`: after building
+   * the fused candidate set and applying `askOnlyRankCap` (ask-only nodes
+   * whose ask rank exceeds it are dropped; nodes present in both lists and
+   * colgrep-only nodes are never dropped), returns every remaining candidate
+   * sorted by rrf desc, nodeId asc — no tiers. Provenance tags are
+   * unaffected either way. */
+  ordering?: "tiered" | "rrf";
+  /** Forwarded to `ask()`'s own `graphRank` option (default true there) —
+   * `fuseSearch` itself never reads this field; `search()` passes it through
+   * to the internal `ask()` call. Declared here purely so one `_ablation`
+   * object can carry every search-time ablation switch together. */
+  graphRank?: boolean;
+}
+
 export interface FuseSearchOptions {
   askHits: AskSearchHit[];
   semantic: SearchCandidate[];
@@ -371,6 +403,10 @@ export interface FuseSearchOptions {
    * strongest signal there is and must never be capped away by a display
    * limit. Semantic-only candidates are unaffected. */
   askOnlyRankCap?: number;
+  /** Internal-only ablation switches (see {@link SearchAblation}), never
+   * exposed on the CLI or MCP. Omitted (or `{}`) reproduces today's
+   * behavior exactly. @internal */
+  _ablation?: SearchAblation;
 }
 
 /** Filters test/tools paths (unless `includeTests`), reciprocal-rank-fuses
@@ -410,6 +446,9 @@ export interface FuseSearchOptions {
 export function fuseSearch(opts: FuseSearchOptions): SearchCandidate[] {
   const includeTests = opts.includeTests ?? false;
   const limit = opts.limit ?? 10;
+  const ablation = opts._ablation ?? {};
+  const sameFileMode = ablation.sameFile ?? "tier1b";
+  const ordering = ablation.ordering ?? "tiered";
 
   const askHits = includeTests ? opts.askHits : opts.askHits.filter((h) => !isTestPath(h.path));
   const rawSemantic = includeTests ? opts.semantic : opts.semantic.filter((h) => !isTestPath(h.path));
@@ -431,7 +470,7 @@ export function fuseSearch(opts: FuseSearchOptions): SearchCandidate[] {
   for (const s of rawSemantic) {
     let item = s;
     let wasReKeyed = false;
-    if (s.kind === "file") {
+    if (sameFileMode !== "off" && s.kind === "file") {
       const bestIdx = bestAskSymbolIndexByPath.get(s.path);
       if (bestIdx !== undefined) {
         item = { ...s, nodeId: askHits[bestIdx].nodeId, colgrepMatch: s.colgrepMatch ?? "file" };
@@ -498,11 +537,36 @@ export function fuseSearch(opts: FuseSearchOptions): SearchCandidate[] {
   const byRrfDescThenNodeIdAsc = (a: SearchCandidate, b: SearchCandidate): number =>
     b.rrf !== a.rrf ? b.rrf - a.rrf : a.nodeId < b.nodeId ? -1 : a.nodeId > b.nodeId ? 1 : 0;
 
+  // `_ablation.ordering: "rrf"` — after the ask-only rank cap (ask-only nodes
+  // whose ask rank exceeds it are dropped; `both`/colgrep-only nodes are
+  // never dropped), sort every remaining candidate by rrf desc, nodeId asc.
+  // No tiers; provenance tags are unaffected. Under `_ablation.sameFile:
+  // "tier2"`, a `same-file` node is placed in the ask-only alternation list
+  // (see tier 2 below) and so must be subject to the same ask-rank cap here
+  // too — under the default/"off" sameFile modes it keeps its own placement
+  // and is never capped by this filter.
+  if (ordering === "rrf") {
+    const kept = [...byId.values()].filter((r) => {
+      const isAskOnly = r.provenance === "lexical" || r.provenance === "graph";
+      const isCappedSameFile = sameFileMode === "tier2" && r.provenance === "same-file";
+      if (!isAskOnly && !isCappedSameFile) return true;
+      if (opts.askOnlyRankCap === undefined) return true;
+      const askRank = r.ranks.ask;
+      return askRank === undefined || askRank <= opts.askOnlyRankCap;
+    });
+    return kept.sort(byRrfDescThenNodeIdAsc).slice(0, limit);
+  }
+
   // Tier 1: every candidate both retrievers agree on at the node level.
   const tier1 = [...byId.values()].filter((r) => r.provenance === "both").sort(byRrfDescThenNodeIdAsc);
   // Tier 1b: same-file re-key agreement — real signal, ranked below true
-  // node-level agreement but still above tier 2.
-  const tier1b = [...byId.values()].filter((r) => r.provenance === "same-file").sort(byRrfDescThenNodeIdAsc);
+  // node-level agreement but still above tier 2. Under `_ablation.sameFile:
+  // "tier2"`, same-file candidates are excluded here entirely — they join
+  // the ask-only list at their own ask rank below instead.
+  const tier1b =
+    sameFileMode === "tier2"
+      ? []
+      : [...byId.values()].filter((r) => r.provenance === "same-file").sort(byRrfDescThenNodeIdAsc);
 
   // Tier 2 source lists: the remaining ask-only and semantic-only nodeIds,
   // each already in that list's own rank order (askHits/semantic are
@@ -511,9 +575,19 @@ export function fuseSearch(opts: FuseSearchOptions): SearchCandidate[] {
   {
     const seen = new Set<string>();
     for (const h of askHits) {
-      if (semanticById.has(h.nodeId) || seen.has(h.nodeId)) continue;
+      if (seen.has(h.nodeId)) continue;
+      const cand = byId.get(h.nodeId);
+      if (semanticById.has(h.nodeId)) {
+        // Under "tier2", a same-file node is deliberately treated as
+        // ask-only for placement purposes even though it's also present in
+        // `semanticById` — everything else present in both lists (true
+        // `both` agreement, or same-file under the default/"off" modes,
+        // which are placed elsewhere) stays excluded here.
+        const includeSameFileAsAskOnly = sameFileMode === "tier2" && cand?.provenance === "same-file";
+        if (!includeSameFileAsAskOnly) continue;
+      }
       seen.add(h.nodeId);
-      const askRank = byId.get(h.nodeId)?.ranks.ask;
+      const askRank = cand?.ranks.ask;
       if (opts.askOnlyRankCap !== undefined && askRank !== undefined && askRank > opts.askOnlyRankCap) continue;
       askOnlyIds.push(h.nodeId);
     }

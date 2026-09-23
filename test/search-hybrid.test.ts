@@ -934,6 +934,228 @@ test("renderSearch: compact line format, unindexed suffix, trailing note", () =>
   assert.equal(lines[2], "colgrep not on PATH");
 });
 
+// ── `_ablation` (internal-only, `@internal`; see SearchAblation) ──
+
+/** Shared fixture for the `sameFile` ablation tests: ask ranks "shared"
+ * (rank 1, the symbol colgrep's file hit re-keys onto), "a2" (rank 2), "a3"
+ * (rank 3); semantic ranks a FILE hit for "shared"'s path (rank 1, re-keys
+ * under "tier1b"/"tier2") and colgrep-only "s2" (rank 2). */
+function sameFileAblationFixture(): { askHits: any[]; semantic: SearchCandidate[] } {
+  const askHits = [
+    { nodeId: "shared", path: "src/shared.ts", span: "L1-L2", name: "shared", kind: "function", signature: null },
+    { nodeId: "a2", path: "src/a2.ts", span: "L1-L2", name: "a2", kind: "function", signature: null },
+    { nodeId: "a3", path: "src/a3.ts", span: "L1-L2", name: "a3", kind: "function", signature: null },
+  ];
+  const semantic: SearchCandidate[] = [
+    {
+      nodeId: "src/shared.ts",
+      path: "src/shared.ts",
+      span: "L1-L50",
+      name: "shared.ts",
+      kind: "file",
+      signature: null,
+      provenance: "colgrep",
+      rrf: 0,
+      ranks: {},
+      colgrepMatch: "file",
+    },
+    {
+      nodeId: "s2",
+      path: "src/s2.ts",
+      span: "L1-L2",
+      name: "s2",
+      kind: "function",
+      signature: null,
+      provenance: "colgrep",
+      rrf: 0,
+      ranks: {},
+    },
+  ];
+  return { askHits, semantic };
+}
+
+test("fuseSearch: _ablation.sameFile default ('tier1b') matches current (no-ablation) behavior byte-for-byte", () => {
+  const { askHits, semantic } = sameFileAblationFixture();
+  const withoutAblation = fuseSearch({ askHits, semantic, includeTests: true, limit: 10 });
+  const withDefaultAblation = fuseSearch({ askHits, semantic, includeTests: true, limit: 10, _ablation: {} });
+  const withExplicitTier1b = fuseSearch({ askHits, semantic, includeTests: true, limit: 10, _ablation: { sameFile: "tier1b" } });
+  assert.deepEqual(withDefaultAblation, withoutAblation);
+  assert.deepEqual(withExplicitTier1b, withoutAblation);
+  assert.deepEqual(
+    withoutAblation.map((r) => r.nodeId),
+    ["shared", "a2", "s2", "a3"],
+  );
+  assert.equal(withoutAblation[0].provenance, "same-file");
+});
+
+test("fuseSearch: _ablation.sameFile 'tier2' — the re-keyed node keeps provenance 'same-file' but joins alternation at its ask rank, not tier 1b", () => {
+  const { askHits, semantic } = sameFileAblationFixture();
+  const result = fuseSearch({ askHits, semantic, includeTests: true, limit: 10, _ablation: { sameFile: "tier2" } });
+  assert.deepEqual(
+    result.map((r) => r.nodeId),
+    ["shared", "s2", "a2", "a3"],
+    "'shared' still sits at its ask rank (1) inside alternation, not promoted to a dedicated tier above tier 2",
+  );
+  assert.equal(result[0].provenance, "same-file", "provenance is unchanged by the placement ablation");
+});
+
+test("fuseSearch: _ablation.sameFile 'off' — no re-key at all; the colgrep file candidate stays separate with provenance 'colgrep'", () => {
+  const { askHits, semantic } = sameFileAblationFixture();
+  const result = fuseSearch({ askHits, semantic, includeTests: true, limit: 10, _ablation: { sameFile: "off" } });
+  const byId = new Map(result.map((r) => [r.nodeId, r]));
+  assert.equal(byId.get("shared")!.provenance, "lexical", "ask's own symbol hit, no re-key credit");
+  assert.equal(byId.get("src/shared.ts")!.provenance, "colgrep", "the file candidate never re-keys under 'off'");
+  assert.equal(byId.get("src/shared.ts")!.kind, "file");
+  assert.deepEqual(
+    result.map((r) => r.nodeId),
+    ["shared", "src/shared.ts", "a2", "s2", "a3"],
+  );
+});
+
+test("fuseSearch: _ablation.ordering 'rrf' sorts by rrf desc / nodeId asc, no tiers — differs from tiered order in a constructed case", () => {
+  // Tiered alternation starts with ask (tie: askTop=1 == semTop=1, ties go
+  // ask) giving z1 before a1; plain rrf ties on score and breaks by nodeId
+  // asc, putting "a1" before "z1" — the two orderings genuinely diverge.
+  const askHits = [
+    { nodeId: "z1", path: "src/z1.ts", span: "L1-L2", name: "z1", kind: "function", signature: null },
+    { nodeId: "z2", path: "src/z2.ts", span: "L1-L2", name: "z2", kind: "function", signature: null },
+    { nodeId: "z3", path: "src/z3.ts", span: "L1-L2", name: "z3", kind: "function", signature: null },
+  ];
+  const semantic: SearchCandidate[] = [
+    { nodeId: "a1", path: "src/a1.ts", span: "L1-L2", name: "a1", kind: "function", signature: null, provenance: "colgrep", rrf: 0, ranks: {} },
+    { nodeId: "a2", path: "src/a2.ts", span: "L1-L2", name: "a2", kind: "function", signature: null, provenance: "colgrep", rrf: 0, ranks: {} },
+  ];
+
+  const tiered = fuseSearch({ askHits, semantic, includeTests: true, limit: 10 });
+  assert.deepEqual(
+    tiered.map((r) => r.nodeId),
+    ["z1", "a1", "z2", "a2", "z3"],
+    "sanity: tiered alternation order",
+  );
+
+  const rrfOrdered = fuseSearch({ askHits, semantic, includeTests: true, limit: 10, _ablation: { ordering: "rrf" } });
+  assert.deepEqual(
+    rrfOrdered.map((r) => r.nodeId),
+    ["a1", "z1", "a2", "z2", "z3"],
+    "plain rrf-desc/nodeId-asc order differs from the tiered alternation above",
+  );
+});
+
+test("fuseSearch: askOnlyRankCap still applies under _ablation.ordering 'rrf' — capped ask-only nodes are dropped, 'both'/colgrep-only survive", () => {
+  const askHits = Array.from({ length: 12 }, (_, i) => ({
+    nodeId: `a${i + 1}`,
+    path: `src/a${i + 1}.ts`,
+    span: "L1-L2",
+    name: `a${i + 1}`,
+    kind: "function",
+    signature: null,
+  }));
+  const semantic: SearchCandidate[] = [
+    { nodeId: "a12", path: "src/a12.ts", span: "L1-L2", name: "a12", kind: "function", signature: null, provenance: "colgrep", rrf: 0, ranks: {} },
+    { nodeId: "s2", path: "src/s2.ts", span: "L1-L2", name: "s2", kind: "function", signature: null, provenance: "colgrep", rrf: 0, ranks: {} },
+  ];
+  const result = fuseSearch({
+    askHits,
+    semantic,
+    includeTests: true,
+    limit: 20,
+    askOnlyRankCap: 10,
+    _ablation: { ordering: "rrf" },
+  });
+  const byId = new Map(result.map((r) => [r.nodeId, r]));
+  assert.equal(byId.get("a12")!.provenance, "both", "'both' survives the cap regardless of ordering");
+  assert.equal(byId.has("a11"), false, "ask-only rank 11 (over the cap) is dropped under rrf ordering too");
+  assert.equal(byId.has("a10"), true, "ask-only rank 10 (at the cap) survives");
+  assert.equal(byId.has("s2"), true, "colgrep-only nodes are never dropped by the ask-only cap");
+});
+
+test("fuseSearch: askOnlyRankCap still applies under _ablation.sameFile 'tier2' — a same-file node past the cap is dropped entirely", () => {
+  const askHits = Array.from({ length: 11 }, (_, i) => ({
+    nodeId: `a${i + 1}`,
+    path: `src/a${i + 1}.ts`,
+    span: "L1-L2",
+    name: `a${i + 1}`,
+    kind: "function",
+    signature: null,
+  }));
+  // "a11" (ask rank 11, over a cap of 10) also gets a colgrep FILE hit for
+  // its path — under 'tier2' that would normally join the ask-only
+  // alternation list at rank 11, but the cap must still drop it.
+  const semantic: SearchCandidate[] = [
+    { nodeId: "src/a11.ts", path: "src/a11.ts", span: "L1-L50", name: "a11.ts", kind: "file", signature: null, provenance: "colgrep", rrf: 0, ranks: {}, colgrepMatch: "file" },
+    { nodeId: "s2", path: "src/s2.ts", span: "L1-L2", name: "s2", kind: "function", signature: null, provenance: "colgrep", rrf: 0, ranks: {} },
+  ];
+  const capped = fuseSearch({
+    askHits,
+    semantic,
+    includeTests: true,
+    limit: 20,
+    askOnlyRankCap: 10,
+    _ablation: { sameFile: "tier2" },
+  });
+  assert.equal(capped.find((r) => r.nodeId === "a11"), undefined, "same-file node past the cap is dropped, not just demoted");
+
+  const uncapped = fuseSearch({
+    askHits,
+    semantic,
+    includeTests: true,
+    limit: 20,
+    _ablation: { sameFile: "tier2" },
+  });
+  const uncappedById = new Map(uncapped.map((r) => [r.nodeId, r]));
+  assert.equal(uncappedById.get("a11")?.provenance, "same-file", "without a cap, the same-file node at rank 11 survives");
+});
+
+test("fuseSearch: askOnlyRankCap applies to a same-file node under combined _ablation.sameFile 'tier2' + ordering 'rrf'", () => {
+  const askHits = Array.from({ length: 11 }, (_, i) => ({
+    nodeId: `a${i + 1}`,
+    path: `src/a${i + 1}.ts`,
+    span: "L1-L2",
+    name: `a${i + 1}`,
+    kind: "function",
+    signature: null,
+  }));
+  // "a11" (ask rank 11, over a cap of 10) gets a colgrep FILE hit for its
+  // path — under 'tier2' it's excluded from tier 1b and, since it's marked
+  // as a same-file node, must also be capped by ask rank under plain rrf
+  // ordering, exactly like a true ask-only ('lexical'/'graph') node is.
+  const semantic: SearchCandidate[] = [
+    { nodeId: "src/a11.ts", path: "src/a11.ts", span: "L1-L50", name: "a11.ts", kind: "file", signature: null, provenance: "colgrep", rrf: 0, ranks: {}, colgrepMatch: "file" },
+  ];
+  const capped = fuseSearch({
+    askHits,
+    semantic,
+    includeTests: true,
+    limit: 20,
+    askOnlyRankCap: 10,
+    _ablation: { sameFile: "tier2", ordering: "rrf" },
+  });
+  assert.equal(capped.find((r) => r.nodeId === "a11"), undefined, "same-file node past the cap is dropped under rrf ordering too");
+
+  const uncapped = fuseSearch({
+    askHits,
+    semantic,
+    includeTests: true,
+    limit: 20,
+    _ablation: { sameFile: "tier2", ordering: "rrf" },
+  });
+  assert.ok(uncapped.find((r) => r.nodeId === "a11"), "without a cap, the same-file node at rank 11 survives under rrf ordering");
+
+  // Default sameFile mode ('tier1b') is unaffected by this cap change: the
+  // re-keyed 'same-file' node is never treated as ask-only for capping.
+  const defaultMode = fuseSearch({
+    askHits,
+    semantic,
+    includeTests: true,
+    limit: 20,
+    askOnlyRankCap: 10,
+    _ablation: { ordering: "rrf" },
+  });
+  const a11Default = defaultMode.find((r) => r.nodeId === "a11");
+  assert.ok(a11Default, "default sameFile mode ('tier1b') keeps the same-file node past the ask-only cap");
+  assert.equal(a11Default!.provenance, "same-file");
+});
+
 test("renderSearch: same-file gets its own tag", () => {
   const results: SearchCandidate[] = [
     {

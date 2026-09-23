@@ -12,6 +12,7 @@ import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { search } from "../src/search/search.js";
 import { writeGraph } from "../src/graph/write.js";
+import { buildGraph } from "../src/graph/build.js";
 import type { GraphV1, NodeV1 } from "../src/graph/types.js";
 
 function node(partial: Partial<NodeV1> & Pick<NodeV1, "id" | "path" | "span" | "kind" | "name">): NodeV1 {
@@ -187,6 +188,58 @@ test("search: fused path — semantic-only hit tagged 'semantic', shared hit tag
   const gamma = result.results.find((r) => r.path === "src/gamma.ts");
   assert.ok(gamma, "gamma should appear, matched by both ask and colgrep");
   assert.equal(gamma!.provenance, "both");
+});
+
+test("search: _ablation.graphRank reaches the internal ask() call and changes observable ordering", async () => {
+  // A real built graph (not the static writeGraph fixture above) with a
+  // same-word lexical collision between a graph-connected symbol
+  // (`fooHandler`, wired to two helpers) and an isolated one (`fooWidget`) —
+  // the same fixture shape `test/graphrank.test.ts` uses to prove `ask`'s
+  // own graphRank option. ColGREP is routed to `unresolvableEnv()` so
+  // `search()`'s result order here is exactly `ask`'s own order (tier 2
+  // alternation with an empty semantic list), making the ablation's effect
+  // on `ask` directly observable through `search()`.
+  const root = mkdtempSync(join(tmpdir(), "graft-search-cmd-graphrank-"));
+  writeFileSync(
+    join(root, "connected.ts"),
+    `export function fooHandler() {\n  helperAlpha();\n  helperBeta();\n}\n` +
+      `export function helperAlpha() { return 1; }\n` +
+      `export function helperBeta() { return 2; }\n`,
+  );
+  writeFileSync(join(root, "isolated.ts"), `export function fooWidget() { return 0; }\n`);
+  await buildGraph(root);
+
+  const env = unresolvableEnv();
+  const namesOf = async (ablation?: { graphRank: boolean }) => {
+    const result = await search(root, "foo", { limit: 10, env, ...(ablation ? { _ablation: ablation } : {}) });
+    return result.results.map((r) => r.name);
+  };
+
+  const defaultOrder = await namesOf();
+  const graphRankOnExplicit = await namesOf({ graphRank: true });
+  const graphRankOff = await namesOf({ graphRank: false });
+
+  assert.deepEqual(
+    graphRankOnExplicit,
+    defaultOrder,
+    "_ablation: { graphRank: true } reproduces the default (omitted _ablation) order exactly",
+  );
+
+  const iHandlerDefault = defaultOrder.indexOf("fooHandler");
+  const iWidgetDefault = defaultOrder.indexOf("fooWidget");
+  assert.ok(iHandlerDefault >= 0 && iWidgetDefault >= 0, "both same-word hits present by default");
+  assert.ok(
+    iHandlerDefault < iWidgetDefault,
+    "graphRank on (default) ranks the graph-connected hit above the isolated one",
+  );
+
+  const iHandlerOff = graphRankOff.indexOf("fooHandler");
+  const iWidgetOff = graphRankOff.indexOf("fooWidget");
+  assert.ok(iHandlerOff >= 0 && iWidgetOff >= 0, "both same-word hits present with graphRank off too");
+  assert.ok(
+    iHandlerOff >= iWidgetOff,
+    "_ablation: { graphRank: false } removes the connectivity advantage, matching pure lexical order",
+  );
 });
 
 test("search: a concept hit whose first source is a test file maps to its first non-test source instead", async () => {
@@ -589,6 +642,82 @@ test("search: no graph found at all -> a clear thrown Error before ColGREP ever 
     /no graph found — run `graft build` first/,
   );
   assert.equal(existsSync(dumpPath), false, "ColGREP must never be spawned when there is no graph to map its hits onto");
+});
+
+test("search: opts.k NaN is rejected before any ColGREP spawn or graph work", async () => {
+  const root = makeFixtureRepo();
+  const { env, dumpPath } = argvCaptureEnv(makeFakeColgrepFixture());
+  await assert.rejects(
+    () => search(root, "provisionResource", { limit: 5, k: NaN, env }),
+    /invalid k "NaN": expected a finite number >= 0/,
+  );
+  assert.equal(existsSync(dumpPath), false, "ColGREP must never be spawned for a rejected k");
+});
+
+test("search: opts.k negative is rejected", async () => {
+  const root = makeFixtureRepo();
+  await assert.rejects(
+    () => search(root, "provisionResource", { limit: 5, k: -1, env: unresolvableEnv() }),
+    /invalid k "-1": expected a finite number >= 0/,
+  );
+});
+
+test("search: opts.k Infinity is rejected", async () => {
+  const root = makeFixtureRepo();
+  await assert.rejects(
+    () => search(root, "provisionResource", { limit: 5, k: Infinity, env: unresolvableEnv() }),
+    /invalid k "Infinity": expected a finite number >= 0/,
+  );
+});
+
+test("search: opts.k 0 is accepted", async () => {
+  const root = makeFixtureRepo();
+  const result = await search(root, "provisionResource", { limit: 5, k: 0, env: unresolvableEnv() });
+  assert.ok(result.results.length > 0);
+});
+
+test("search: opts.k 60 (the documented default) is accepted", async () => {
+  const root = makeFixtureRepo();
+  const result = await search(root, "provisionResource", { limit: 5, k: 60, env: unresolvableEnv() });
+  assert.ok(result.results.length > 0);
+});
+
+test("CLI `graft search --k -1` fails loudly and exits non-zero", () => {
+  const root = makeFixtureRepo();
+  assert.throws(
+    () => {
+      execFileSync(
+        process.execPath,
+        ["--import", "tsx", "src/cli.ts", "search", "provisionResource", root, "--k", "-1"],
+        { stdio: "pipe" },
+      );
+    },
+    (err: unknown) => {
+      const stderr = (err as { stderr?: Buffer }).stderr?.toString() ?? "";
+      assert.match(stderr, /invalid k "-1": expected a finite number >= 0/);
+      assert.notEqual((err as { status?: number }).status, 0);
+      return true;
+    },
+  );
+});
+
+test("CLI `graft search --k abc` fails loudly and exits non-zero", () => {
+  const root = makeFixtureRepo();
+  assert.throws(
+    () => {
+      execFileSync(
+        process.execPath,
+        ["--import", "tsx", "src/cli.ts", "search", "provisionResource", root, "--k", "abc"],
+        { stdio: "pipe" },
+      );
+    },
+    (err: unknown) => {
+      const stderr = (err as { stderr?: Buffer }).stderr?.toString() ?? "";
+      assert.match(stderr, /invalid k "NaN": expected a finite number >= 0/);
+      assert.notEqual((err as { status?: number }).status, 0);
+      return true;
+    },
+  );
 });
 
 test("CLI `graft search --colgrep-mode <bad>` fails loudly instead of silently repairing to hybrid", () => {

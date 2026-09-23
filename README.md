@@ -494,13 +494,77 @@ verify by hand:
 node scripts/eval-search.mjs my-gold.json --dir /path/to/repo --limits 5,8
 ```
 
-`my-gold.json` (or `.jsonl`) lists `{ id, query, gold, partial? }`, where
-`gold`/`partial` are repo-relative paths or `path#symbol`. Each query scores
-HIT (a `gold` path is in the top-N), PARTIAL (only `partial` is), or MISS,
-per `--limit`; output is a markdown table (rank, provenance, timing) plus
-totals, or `--json`. `--via cli` checks parity against the real CLI. Exit
-code is always 0 — a report, not a gate. Verify `gold` from source, never
-from the tool under test.
+`my-gold.json` (or `.jsonl`) lists queries with `required` groups of
+repo-relative paths or `path#symbol` — a group is a string (one item) or an
+array of equivalent alternatives, and every group must be satisfied for a
+HIT (any member satisfies its own group). `q1` below needs both the expiry
+check AND (either the refresh path OR the legacy refresh path) — two
+required groups, the second with an alternative — plus a `partial` hit;
+`q2` has exactly one required group, so `acceptable` may extend it:
+
+```json
+{ "queries": [
+  { "id": "q1", "query": "how does session expiry work",
+    "required": ["src/auth/session.ts#checkExpiry",
+                 ["src/auth/session.ts#refresh", "src/auth/session-legacy.ts#refresh"]],
+    "partial": ["src/auth/session.ts"] },
+  { "id": "q2", "query": "where are auth tokens validated",
+    "required": ["src/auth/tokens.ts#validate"],
+    "acceptable": ["src/auth/tokens-legacy.ts#validate"] }
+] }
+```
+
+`acceptable` is only valid when `required` has exactly one group (an error
+otherwise, since which group it would extend is ambiguous) and cannot be
+combined with the legacy `"gold"` shape below — its items are appended to
+that one group. The legacy shape `"gold": [...]` (no `required`) still
+works, unchanged, as a single required group. `partial` lists
+paths/`path#symbol` that are useful but incomplete evidence. Every
+`required`/`acceptable`/`partial` entry must be a non-empty string, and the
+same entry string can't appear in two different required groups (a path and
+its `path#symbol` form in different groups are not duplicates — a single
+result may legitimately satisfy both).
+
+Each query is scored per `--limit` as its own `search()` call at that limit
+(never a prefix slice of a longer run): `recall` is required-groups-found
+over total groups; `allRequired` means every group was satisfied;
+`firstRelevantRank`/`completeRank` are the first rank satisfying any group
+and the last group's first-satisfying rank (only when `allRequired`, never a
+fake finite value otherwise); `reciprocalRank` (1/`firstRelevantRank`, else
+0) rolls up to MRR. Verdict is HIT (`allRequired`), PARTIAL (some group
+satisfied, or only a `partial` entry), or MISS. Output is a markdown table
+per limit (verdict, found/groups, first/complete rank, RR, provenance,
+timing) plus totals, or `--json`. With `--json`, each per-limit entry also
+carries the ranked `results` the search actually returned (`rank`, `path`,
+`name`, `provenance`) so a MISS or PARTIAL can be diagnosed, or re-scored
+offline, without a re-run — the markdown table is unchanged and still omits
+them.
+
+`--arms off,hybrid,semantic,samefile-tier2,samefile-off,rrf-order,no-graphrank`
+runs the same queries through each named preset and adds an arm × limit
+comparison table; `--k <n>` (RRF constant) applies to every arm. The
+`samefile-*`/`rrf-order`/`no-graphrank` arms exercise internal ranking
+ablations and only work `--via api` (the default) — `--via cli` checks
+parity against the real CLI for the plain colgrep-mode arms (`off`,
+`hybrid`, `semantic`) but rejects the ablation arms as a usage error, since
+the CLI itself has no flag for them. `--via cli` runs the actual `graft`
+CLI, which refreshes the graph before searching; `--via api` searches the
+graph on disk as-is. Exit code is 0 for a completed report, 2 for an
+invalid gold file or CLI arguments, or 1 if a `search()` call itself fails
+(e.g. a `--via cli` invocation exits non-zero). Verify `required` paths from
+source, never from the tool under test. Latency comparisons assume a warm,
+unchanged ColGREP index — the harness warms each arm once (one unscored
+search using the first gold query at the largest `--limits` value) before
+timing it, unless `--no-warmup`.
+
+`--check-gold` validates a gold file against the graph on disk for `--dir`
+instead of running any searches: gold entries must name indexed nodes;
+symbols Graft does not index can only be matched at file level. It prints
+one line per problem (`FILE NOT INDEXED` for a path with no node, or
+`SYMBOL NOT INDEXED`, with up to 3 candidate names as hints, for a
+`path#symbol` whose path has nodes but none named `symbol`) and exits 1 if
+any, 0 if none — run it after writing or editing a gold file, before trusting
+its scores.
 
 ## Monorepos, submodules & multi-repo folders
 

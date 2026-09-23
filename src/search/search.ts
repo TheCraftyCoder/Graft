@@ -16,7 +16,14 @@ import { assertPrefixIndexed, pathUnderPrefix } from "../graph/scopes.js";
 import { normalizePathPrefix } from "../util/paths.js";
 import type { GraphV1, NodeV1 } from "../graph/types.js";
 import { runColgrep, type ColgrepHit } from "./colgrep.js";
-import { mapHitsToNodes, fuseSearch, isTestPath, type AskSearchHit, type SearchCandidate } from "./hybrid.js";
+import {
+  mapHitsToNodes,
+  fuseSearch,
+  isTestPath,
+  type AskSearchHit,
+  type SearchCandidate,
+  type SearchAblation,
+} from "./hybrid.js";
 
 /** Generic test-path segment names/globs passed to ColGREP as
  * `--exclude-dir`/`--exclude` when `includeTests` is off, so ColGREP's own
@@ -85,6 +92,11 @@ export interface SearchOptions {
    * custom ColGREP install via `GRAFT_COLGREP_BIN`) route the subprocess
    * without mutating the real `process.env`. */
   env?: NodeJS.ProcessEnv;
+  /** Internal-only ablation switches (see {@link SearchAblation}), passed
+   * through to `fuseSearch`; `graphRank` is additionally forwarded to the
+   * internal `ask()` call. Never exposed on the CLI or MCP surface — an
+   * omitted `_ablation` reproduces today's behavior exactly. @internal */
+  _ablation?: SearchAblation;
 }
 
 export interface SearchResult {
@@ -217,6 +229,14 @@ export async function search(dir: string, query: string, opts: SearchOptions = {
   const includeTests = opts.includeTests ?? false;
   const colgrepMode = opts.colgrepMode ?? "hybrid";
 
+  // Validated before any graph work or ColGREP subprocess is spawned — a
+  // caller mistake (typo'd flag value, `NaN` from an unparsed CLI arg) must
+  // fail loudly and immediately, not silently fall through to `fuseSearch`'s
+  // own RRF math with a garbage `k`.
+  if (opts.k !== undefined && !(Number.isFinite(opts.k) && opts.k >= 0)) {
+    throw new Error(`invalid k "${opts.k}": expected a finite number >= 0`);
+  }
+
   // The graph is loaded FIRST so `--in` can be validated before any ColGREP
   // subprocess is spawned: an absolute path, a prefix resolving outside
   // `root`, or a prefix matching nothing indexed are all caller mistakes
@@ -267,7 +287,12 @@ export async function search(dir: string, query: string, opts: SearchOptions = {
         });
 
   const askT0 = Date.now();
-  const askResult: AskResult = ask(dir, query, { limit: askLimit, in: opts.in, contextDir: opts.contextDir });
+  const askResult: AskResult = ask(dir, query, {
+    limit: askLimit,
+    in: opts.in,
+    contextDir: opts.contextDir,
+    ...(opts._ablation?.graphRank !== undefined ? { graphRank: opts._ablation.graphRank } : {}),
+  });
   const askMs = Date.now() - askT0;
 
   const rawColgrepHits: ColgrepHit[] | null = await colgrepPromise;
@@ -314,6 +339,7 @@ export async function search(dir: string, query: string, opts: SearchOptions = {
     limit,
     k: opts.k,
     askOnlyRankCap,
+    _ablation: opts._ablation,
   });
 
   return {
