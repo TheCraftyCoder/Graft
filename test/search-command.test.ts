@@ -644,6 +644,82 @@ test("search: no graph found at all -> a clear thrown Error before ColGREP ever 
   assert.equal(existsSync(dumpPath), false, "ColGREP must never be spawned when there is no graph to map its hits onto");
 });
 
+test("search: opts.k NaN is rejected before any ColGREP spawn or graph work", async () => {
+  const root = makeFixtureRepo();
+  const { env, dumpPath } = argvCaptureEnv(makeFakeColgrepFixture());
+  await assert.rejects(
+    () => search(root, "provisionResource", { limit: 5, k: NaN, env }),
+    /invalid k "NaN": expected a finite number >= 0/,
+  );
+  assert.equal(existsSync(dumpPath), false, "ColGREP must never be spawned for a rejected k");
+});
+
+test("search: opts.k negative is rejected", async () => {
+  const root = makeFixtureRepo();
+  await assert.rejects(
+    () => search(root, "provisionResource", { limit: 5, k: -1, env: unresolvableEnv() }),
+    /invalid k "-1": expected a finite number >= 0/,
+  );
+});
+
+test("search: opts.k Infinity is rejected", async () => {
+  const root = makeFixtureRepo();
+  await assert.rejects(
+    () => search(root, "provisionResource", { limit: 5, k: Infinity, env: unresolvableEnv() }),
+    /invalid k "Infinity": expected a finite number >= 0/,
+  );
+});
+
+test("search: opts.k 0 is accepted", async () => {
+  const root = makeFixtureRepo();
+  const result = await search(root, "provisionResource", { limit: 5, k: 0, env: unresolvableEnv() });
+  assert.ok(result.results.length > 0);
+});
+
+test("search: opts.k 60 (the documented default) is accepted", async () => {
+  const root = makeFixtureRepo();
+  const result = await search(root, "provisionResource", { limit: 5, k: 60, env: unresolvableEnv() });
+  assert.ok(result.results.length > 0);
+});
+
+test("CLI `graft search --k -1` fails loudly and exits non-zero", () => {
+  const root = makeFixtureRepo();
+  assert.throws(
+    () => {
+      execFileSync(
+        process.execPath,
+        ["--import", "tsx", "src/cli.ts", "search", "provisionResource", root, "--k", "-1"],
+        { stdio: "pipe" },
+      );
+    },
+    (err: unknown) => {
+      const stderr = (err as { stderr?: Buffer }).stderr?.toString() ?? "";
+      assert.match(stderr, /invalid k "-1": expected a finite number >= 0/);
+      assert.notEqual((err as { status?: number }).status, 0);
+      return true;
+    },
+  );
+});
+
+test("CLI `graft search --k abc` fails loudly and exits non-zero", () => {
+  const root = makeFixtureRepo();
+  assert.throws(
+    () => {
+      execFileSync(
+        process.execPath,
+        ["--import", "tsx", "src/cli.ts", "search", "provisionResource", root, "--k", "abc"],
+        { stdio: "pipe" },
+      );
+    },
+    (err: unknown) => {
+      const stderr = (err as { stderr?: Buffer }).stderr?.toString() ?? "";
+      assert.match(stderr, /invalid k "NaN": expected a finite number >= 0/);
+      assert.notEqual((err as { status?: number }).status, 0);
+      return true;
+    },
+  );
+});
+
 test("CLI `graft search --colgrep-mode <bad>` fails loudly instead of silently repairing to hybrid", () => {
   const root = makeFixtureRepo();
   assert.throws(

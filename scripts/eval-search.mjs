@@ -6,7 +6,7 @@
  *   node scripts/eval-search.mjs <gold-file> [--dir <repo>] [--limits 5,8]
  *     [--json] [--include-tests] [--via cli|api] [--colgrep-mode hybrid|semantic|off]
  *     [--k <n>] [--arms off,hybrid,semantic,samefile-tier2,samefile-off,rrf-order,no-graphrank]
- *     [--check-gold]
+ *     [--check-gold] [--no-warmup]
  *
  * `--check-gold` validates the gold file's `required`/`partial` entries
  * against the graph on disk for `--dir` (no searches run): a bare path with
@@ -403,9 +403,9 @@ export async function runEval({ search, gold, limits = [5], includeTests = false
 }
 
 /** Named presets for `--arms`: a colgrep mode plus, for a few, an internal
- * `_ablation` combination (see `plans/2026-09-23-search-eval-metrics-plan.md`
- * Phase A). `_ablation` arms only work `--via api` — the CLI has no flag for
- * them. */
+ * `_ablation` combination that isolates one fusion knob at a time (same-file
+ * tiering, RRF ordering, graph-rank). `_ablation` arms only work `--via api`
+ * — the CLI has no flag for them. */
 export const ARM_PRESETS = {
   off: { colgrepMode: "off" },
   hybrid: { colgrepMode: "hybrid" },
@@ -427,11 +427,30 @@ function resolveArm(name) {
 }
 
 /** Runs `gold` through `search` once per named arm (see `ARM_PRESETS`),
- * reusing `runEval` for each. `k` (if given) applies to every arm. */
-export async function runArms({ search, gold, limits, includeTests, arms, k }) {
+ * reusing `runEval` for each. `k` (if given) applies to every arm.
+ *
+ * Before timing each arm, performs one unscored warm-up `search` call
+ * (the first gold query, at the largest requested limit, using that arm's
+ * own config) whose result and timing are discarded — `search()`'s own
+ * timing (inside `runEval`) is otherwise the FIRST call into a possibly cold
+ * ColGREP index for that arm, which would make an early arm look slower than
+ * a later one purely from index warm-up, not the arm's own retrieval cost.
+ * `warmup: false` (the CLI's `--no-warmup`) skips it — default `true`. */
+export async function runArms({ search, gold, limits, includeTests, arms, k, warmup = true }) {
   const results = [];
+  const maxLimit = Math.max(...limits);
+  const firstQuery = gold.queries[0];
   for (const name of arms) {
     const config = resolveArm(name);
+    if (warmup && firstQuery) {
+      await search(firstQuery.query, {
+        limit: maxLimit,
+        includeTests,
+        colgrepMode: config.colgrepMode,
+        k,
+        _ablation: config._ablation,
+      });
+    }
     const evalResult = await runEval({
       search,
       gold,
@@ -504,7 +523,33 @@ function renderMarkdown(armsResult) {
 const USAGE =
   "usage: node scripts/eval-search.mjs <gold-file> [--dir <repo>] [--limits 5,8] [--json] [--include-tests] " +
   "[--via cli|api] [--colgrep-mode hybrid|semantic|off] [--k <n>] " +
-  "[--arms off,hybrid,semantic,samefile-tier2,samefile-off,rrf-order,no-graphrank] [--check-gold]";
+  "[--arms off,hybrid,semantic,samefile-tier2,samefile-off,rrf-order,no-graphrank] [--check-gold] [--no-warmup]";
+
+/**
+ * Parses `--limits` (default `"5,8"`) into an array of positive integers.
+ * Every comma-separated token must be a bare positive integer — no decimals,
+ * no zero, no negatives, no empty tokens (`"5,,8"`) — and no value may repeat.
+ * Throws an Error naming the exact bad token (or the duplicate value) on any
+ * violation; the caller turns that into a `--limits`-prefixed usage error.
+ */
+function parseLimits(raw) {
+  const tokens = raw.split(",");
+  const seen = new Set();
+  const limits = [];
+  for (const rawToken of tokens) {
+    const token = rawToken.trim();
+    if (!/^[1-9][0-9]*$/.test(token)) {
+      throw new Error(`invalid --limits "${raw}": bad token "${rawToken}" (expected a positive integer)`);
+    }
+    const n = Number(token);
+    if (seen.has(n)) {
+      throw new Error(`invalid --limits "${raw}": duplicate value ${n}`);
+    }
+    seen.add(n);
+    limits.push(n);
+  }
+  return limits;
+}
 
 async function main() {
   const rawArgs = process.argv.slice(2);
@@ -524,6 +569,7 @@ async function main() {
         k: { type: "string" },
         arms: { type: "string" },
         "check-gold": { type: "boolean" },
+        "no-warmup": { type: "boolean" },
       },
     });
   } catch (e) {
@@ -540,7 +586,13 @@ async function main() {
   }
 
   const dir = resolve(values.dir ?? ".");
-  const limits = (values.limits ?? "5,8").split(",").map((n) => Number(n.trim())).filter((n) => Number.isFinite(n) && n > 0);
+  let limits;
+  try {
+    limits = parseLimits(values.limits ?? "5,8");
+  } catch (e) {
+    console.error(e.message);
+    process.exit(2);
+  }
   const asJson = values.json === true;
   const includeTests = values["include-tests"] === true;
   const via = values.via ?? "api";
@@ -556,8 +608,8 @@ async function main() {
   const colgrepMode = colgrepModeArg === "semantic" || colgrepModeArg === "off" ? colgrepModeArg : undefined;
   const kArg = values.k;
   const k = kArg !== undefined ? Number(kArg) : undefined;
-  if (kArg !== undefined && !Number.isFinite(k)) {
-    console.error(`invalid --k "${kArg}"; expected a number`);
+  if (kArg !== undefined && !(Number.isFinite(k) && k >= 0)) {
+    console.error(`invalid --k "${kArg}"; expected a finite number >= 0`);
     process.exit(2);
   }
 
@@ -670,7 +722,7 @@ async function main() {
 
   let armsResult;
   try {
-    armsResult = await runArms({ search, gold, limits, includeTests, arms: armNames, k });
+    armsResult = await runArms({ search, gold, limits, includeTests, arms: armNames, k, warmup: values["no-warmup"] !== true });
   } catch (e) {
     console.error(e.message);
     process.exit(1);

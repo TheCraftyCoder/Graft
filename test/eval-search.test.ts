@@ -417,6 +417,7 @@ test("runArms: passes each preset's config through to the injected search", asyn
     limits: [5],
     arms: ["hybrid", "samefile-tier2", "no-graphrank"],
     k: 42,
+    warmup: false, // isolates config pass-through from the warm-up call (tested separately)
   });
   assert.equal(result.arms.length, 3);
   assert.equal(result.arms[0].name, "hybrid");
@@ -444,6 +445,51 @@ test("runArms: an unknown arm name is rejected", async () => {
     () => runArms({ search: fakeSearch, gold, limits: [5], arms: ["not-a-real-arm"] }),
     /not-a-real-arm/,
   );
+});
+
+test("runArms: warms up once per arm by default with the first gold query at the largest limit, unscored", async () => {
+  const gold = {
+    queries: [
+      { id: "q1", query: "first query", required: ["a.ts"] },
+      { id: "q2", query: "second query", required: ["b.ts"] },
+    ],
+  };
+  const calls = [];
+  async function fakeSearch(query, opts) {
+    calls.push({ query, limit: opts.limit });
+    return { results: [] };
+  }
+  const armsResult = await runArms({ search: fakeSearch, gold, limits: [5, 8], arms: ["hybrid", "off"] });
+
+  // Per arm: 1 warm-up + (2 queries * 2 limits) scored calls = 5; 2 arms = 10.
+  assert.equal(calls.length, 10, "one warm-up call per arm on top of every scored (query, limit) call");
+  assert.equal(calls[0].query, "first query", "the warm-up uses the first gold query");
+  assert.equal(calls[0].limit, 8, "the warm-up uses the largest limit");
+  assert.equal(calls[5].query, "first query", "the second arm's warm-up also runs first for that arm");
+  assert.equal(calls[5].limit, 8);
+
+  // The warm-up is never scored — each arm still has exactly the 2 real queries.
+  for (const arm of armsResult.arms) {
+    assert.equal(arm.perQuery.length, 2, "warm-up call must not appear as a scored query");
+  }
+});
+
+test("runArms: warmup:false skips the warm-up call entirely", async () => {
+  const gold = {
+    queries: [
+      { id: "q1", query: "first query", required: ["a.ts"] },
+      { id: "q2", query: "second query", required: ["b.ts"] },
+    ],
+  };
+  const calls = [];
+  async function fakeSearch(query, opts) {
+    calls.push({ query, limit: opts.limit });
+    return { results: [] };
+  }
+  await runArms({ search: fakeSearch, gold, limits: [5, 8], arms: ["hybrid", "off"], warmup: false });
+
+  // 2 arms * 2 queries * 2 limits, no warm-up calls at all.
+  assert.equal(calls.length, 8);
 });
 
 test("ARM_PRESETS: has the documented preset set with the right shapes", () => {
@@ -551,6 +597,85 @@ test("CLI: an invalid --colgrep-mode fails loudly with a usage error, exit 2, an
       assert.match(stderr, /invalid --colgrep-mode "sematic"; expected hybrid \| semantic \| off/);
       assert.equal(err.status, 2);
       assert.equal(stdout, "", "no results table should be printed for a rejected invocation");
+      return true;
+    },
+  );
+});
+
+for (const [limitsArg, badToken] of [
+  ["5,bad,8", "bad"],
+  ["5.5,8", "5.5"],
+  ["0,8", "0"],
+  ["-3,8", "-3"],
+  ["5,,8", ""],
+]) {
+  test(`CLI: --limits ${JSON.stringify(limitsArg)} is a usage error naming the bad token, exit 2`, () => {
+    const goldPath = join(fixtureDir, "sample-gold.json");
+    assert.throws(
+      () => {
+        execFileSync(
+          process.execPath,
+          [join(packageRoot, "scripts", "eval-search.mjs"), goldPath, `--limits=${limitsArg}`],
+          { stdio: "pipe" },
+        );
+      },
+      (err) => {
+        const stderr = err.stderr?.toString() ?? "";
+        assert.match(stderr, /--limits/);
+        assert.match(stderr, new RegExp(`"${badToken}"`));
+        assert.equal(err.status, 2);
+        return true;
+      },
+    );
+  });
+}
+
+test("CLI: --limits with a duplicate value is a usage error, exit 2", () => {
+  const goldPath = join(fixtureDir, "sample-gold.json");
+  assert.throws(
+    () => {
+      execFileSync(
+        process.execPath,
+        [join(packageRoot, "scripts", "eval-search.mjs"), goldPath, "--limits", "5,8,5"],
+        { stdio: "pipe" },
+      );
+    },
+    (err) => {
+      const stderr = err.stderr?.toString() ?? "";
+      assert.match(stderr, /--limits/);
+      assert.match(stderr, /duplicate/i);
+      assert.equal(err.status, 2);
+      return true;
+    },
+  );
+});
+
+test("CLI: --limits default (5,8) still works unchanged", async () => {
+  const goldPath = join(fixtureDir, "sample-gold.json");
+  const repoRoot = await makeFixtureRepoWithGraph();
+  const out = execFileSync(
+    process.execPath,
+    [join(packageRoot, "scripts", "eval-search.mjs"), goldPath, "--dir", repoRoot, "--json"],
+    { stdio: "pipe" },
+  ).toString();
+  const parsed = JSON.parse(out);
+  assert.deepEqual(parsed.arms[0].limits, [5, 8]);
+});
+
+test("CLI: --k -1 given to the harness is a usage error, exit 2", () => {
+  const goldPath = join(fixtureDir, "sample-gold.json");
+  assert.throws(
+    () => {
+      execFileSync(
+        process.execPath,
+        [join(packageRoot, "scripts", "eval-search.mjs"), goldPath, "--k=-1"],
+        { stdio: "pipe" },
+      );
+    },
+    (err) => {
+      const stderr = err.stderr?.toString() ?? "";
+      assert.match(stderr, /invalid --k "-1"/);
+      assert.equal(err.status, 2);
       return true;
     },
   );

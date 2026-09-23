@@ -229,6 +229,14 @@ export async function search(dir: string, query: string, opts: SearchOptions = {
   const includeTests = opts.includeTests ?? false;
   const colgrepMode = opts.colgrepMode ?? "hybrid";
 
+  // Validated before any graph work or ColGREP subprocess is spawned — a
+  // caller mistake (typo'd flag value, `NaN` from an unparsed CLI arg) must
+  // fail loudly and immediately, not silently fall through to `fuseSearch`'s
+  // own RRF math with a garbage `k`.
+  if (opts.k !== undefined && !(Number.isFinite(opts.k) && opts.k >= 0)) {
+    throw new Error(`invalid k "${opts.k}": expected a finite number >= 0`);
+  }
+
   // The graph is loaded FIRST so `--in` can be validated before any ColGREP
   // subprocess is spawned: an absolute path, a prefix resolving outside
   // `root`, or a prefix matching nothing indexed are all caller mistakes

@@ -552,7 +552,10 @@ CLI, which refreshes the graph before searching; `--via api` searches the
 graph on disk as-is. Exit code is 0 for a completed report, 2 for an
 invalid gold file or CLI arguments, or 1 if a `search()` call itself fails
 (e.g. a `--via cli` invocation exits non-zero). Verify `required` paths from
-source, never from the tool under test.
+source, never from the tool under test. Latency comparisons assume a warm,
+unchanged ColGREP index — the harness warms each arm once (one unscored
+search using the first gold query at the largest `--limits` value) before
+timing it, unless `--no-warmup`.
 
 `--check-gold` validates a gold file against the graph on disk for `--dir`
 instead of running any searches: gold entries must name indexed nodes;
